@@ -4,4 +4,3 @@ dist/
 coverage/
 .env
 *.log
-storage/
