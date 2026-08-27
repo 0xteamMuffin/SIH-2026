@@ -1,0 +1,16 @@
+services:
+  backend:
+    networks: [internal]
+    environment:
+      APP_MODE: sovereign
+      MODEL_PROVIDER: local
+      LOCAL_MODEL_BASE_URL: ${LOCAL_MODEL_BASE_URL}
+      LOCAL_MODEL_API_KEY: ${LOCAL_MODEL_API_KEY}
+      LOCAL_GENERAL_MODEL: ${LOCAL_GENERAL_MODEL}
+      LOCAL_VISION_MODEL: ${LOCAL_VISION_MODEL}
+      LOCAL_CODE_MODEL: ${LOCAL_CODE_MODEL}
+
+networks:
+  internal:
+    internal: true
+  edge: {}

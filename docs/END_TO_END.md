@@ -1,0 +1,49 @@
+# SIH-2026 end-to-end guide
+
+SIH-2026 is an internal AI workbench for confidential industrial documents, images, and code. It keeps application records in local PostgreSQL, source/generated files in local MinIO, and future knowledge search in local Qdrant.
+
+## Sovereign and air-gapped
+
+**Sovereign** means the organisation controls its data stores, model endpoint, access rules, logs, and deployment. In sovereign mode this app sends model prompts only to an internal model endpoint.
+
+**Air-gapped** is stricter: the environment has no route to the public internet. It is enforced by network policy, not by a model instruction. `docker-compose.sovereign.yml` removes the backend's development-egress network; core services use an internal Docker network, and code jobs run with `--network none`. A real deployment must also block outbound traffic at the host firewall/network boundary.
+
+OpenRouter development mode is **not sovereign**: uploaded text is sent to OpenRouter for inference. It is useful only until a local model endpoint is available.
+
+## How a document task works
+
+1. The operator signs in with local credentials and creates a workspace.
+2. A source document is uploaded to MinIO. Its metadata is stored in PostgreSQL through Prisma.
+3. The operator starts a task. The router classifies it as document, vision, code, or general and records the chosen model profile and routing reason.
+4. A durable agent run is created. It records messages, tool calls/results, evidence, artifacts, and audit events in PostgreSQL.
+5. The source file is read through the scoped artifact tool. The current scaffold extracts a bounded text preview; binary/scanned files are honestly marked as needing OCR/vision review.
+6. The selected provider analyses the source. In development this is OpenRouter; in sovereign mode it is an internal OpenAI-compatible endpoint.
+7. Findings become persisted evidence. The document flow generates an approval-note DOCX with source references, saves it to MinIO, and exposes an authenticated download.
+
+## Code task
+
+Code wording routes a task to the code model profile. The sandbox runner creates a temporary Docker job with a read-only root filesystem, dropped capabilities, CPU/memory/PID limits, a timeout, and no network. Its stdout, stderr, and exit code are saved as a run tool result.
+
+## Start modes
+
+Development (requires an OpenRouter key):
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Sovereign mode (requires an already-running internal model endpoint; Compose intentionally does not pull Ollama):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.sovereign.yml up --build
+```
+
+Set `LOCAL_MODEL_BASE_URL` to the organisation-managed internal endpoint, such as `http://internal-model-server:port/v1`, and configure general, vision, and code model IDs.
+
+## Current boundaries
+
+- Qdrant is deployed but knowledge-base ingestion/retrieval is the next module to wire in.
+- OCR and drawing understanding require a configured local OCR/vision pipeline.
+- The current agent persists bounded orchestrated tools; native local-model tool calling is the next harness enhancement.
+- Ollama is not included in the active Compose stack so no Ollama image is pulled.

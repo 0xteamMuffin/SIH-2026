@@ -1,0 +1,173 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  REVIEWER
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ArtifactKind {
+  SOURCE
+  GENERATED_DOCX
+  CODE_OUTPUT
+}
+
+model User {
+  id           String            @id @default(uuid()) @db.Uuid
+  email        String            @unique
+  passwordHash String            @map("password_hash")
+  role         UserRole          @default(OPERATOR)
+  createdAt    DateTime          @default(now()) @map("created_at")
+  workspaces   Workspace[]       @relation("WorkspaceCreator")
+  memberships  WorkspaceMember[]
+  artifacts    Artifact[]
+  runs         AgentRun[]
+  auditEvents  AuditEvent[]
+
+  @@map("users")
+}
+
+model Workspace {
+  id          String            @id @default(uuid()) @db.Uuid
+  name        String
+  createdBy   String            @map("created_by") @db.Uuid
+  createdAt   DateTime          @default(now()) @map("created_at")
+  creator     User              @relation("WorkspaceCreator", fields: [createdBy], references: [id])
+  members     WorkspaceMember[]
+  artifacts   Artifact[]
+  runs        AgentRun[]
+  auditEvents AuditEvent[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  workspaceId String    @map("workspace_id") @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  role        UserRole  @default(OPERATOR)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, userId])
+  @@map("workspace_members")
+}
+
+model Artifact {
+  id          String       @id @default(uuid()) @db.Uuid
+  workspaceId String       @map("workspace_id") @db.Uuid
+  createdBy   String       @map("created_by") @db.Uuid
+  kind        ArtifactKind
+  filename    String
+  mimeType    String       @map("mime_type")
+  objectKey   String       @unique @map("object_key")
+  sizeBytes   BigInt       @map("size_bytes")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator     User         @relation(fields: [createdBy], references: [id])
+  evidence    Evidence[]
+
+  @@map("artifacts")
+}
+
+model AgentRun {
+  id                String        @id @default(uuid()) @db.Uuid
+  workspaceId       String        @map("workspace_id") @db.Uuid
+  requestedBy       String        @map("requested_by") @db.Uuid
+  task              String
+  taskCapability    String        @map("task_capability")
+  modelProfile      String        @map("model_profile")
+  modelReason       String        @map("model_reason")
+  status            RunStatus     @default(PENDING)
+  state             Json          @default("{}")
+  result            Json?
+  activeWorkspaceId String?       @unique @map("active_workspace_id") @db.Uuid
+  startedAt         DateTime?     @map("started_at")
+  completedAt       DateTime?     @map("completed_at")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+  workspace         Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  requester         User          @relation(fields: [requestedBy], references: [id])
+  messages          RunMessage[]
+  toolCalls         RunToolCall[]
+  evidence          Evidence[]
+  auditEvents       AuditEvent[]
+
+  @@index([workspaceId, createdAt])
+  @@map("agent_runs")
+}
+
+model RunMessage {
+  id        String   @id @default(uuid()) @db.Uuid
+  runId     String   @map("run_id") @db.Uuid
+  turn      Int
+  role      String
+  content   Json
+  createdAt DateTime @default(now()) @map("created_at")
+  run       AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@map("run_messages")
+}
+
+model RunToolCall {
+  id              String    @id @default(uuid()) @db.Uuid
+  runId           String    @map("run_id") @db.Uuid
+  modelToolCallId String    @map("model_tool_call_id")
+  toolName        String    @map("tool_name")
+  input           Json
+  output          Json?
+  status          String    @default("PENDING")
+  idempotencyKey  String    @map("idempotency_key")
+  startedAt       DateTime  @default(now()) @map("started_at")
+  completedAt     DateTime? @map("completed_at")
+  run             AgentRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, modelToolCallId])
+  @@unique([runId, idempotencyKey])
+  @@map("run_tool_calls")
+}
+
+model Evidence {
+  id         String    @id @default(uuid()) @db.Uuid
+  runId      String    @map("run_id") @db.Uuid
+  artifactId String?   @map("artifact_id") @db.Uuid
+  sourceRef  String    @map("source_ref")
+  title      String
+  summary    String
+  facts      Json      @default("[]")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  run        AgentRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  artifact   Artifact? @relation(fields: [artifactId], references: [id])
+
+  @@map("evidence")
+}
+
+model AuditEvent {
+  id          String     @id @default(uuid()) @db.Uuid
+  actorId     String?    @map("actor_id") @db.Uuid
+  workspaceId String?    @map("workspace_id") @db.Uuid
+  runId       String?    @map("run_id") @db.Uuid
+  eventType   String     @map("event_type")
+  metadata    Json       @default("{}")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  actor       User?      @relation(fields: [actorId], references: [id])
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  run         AgentRun?  @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@map("audit_events")
+}
