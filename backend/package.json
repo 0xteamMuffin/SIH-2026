@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.735.0",
-    "@prisma/client": "^6.5.0",
+    "@prisma/client": "6.19.3",
     "@prometheus-io/client": "^0.16.1",
     "@qdrant/js-client-rest": "~1.19.0",
     "amqplib": "^2.0.1",
@@ -37,7 +37,7 @@
     "pino": "^9.6.0",
     "pino-http": "^10.3.0",
     "pptxgenjs": "^4.0.1",
-    "prisma": "^6.5.0",
+    "prisma": "6.19.3",
     "zod": "^3.24.2"
   },
   "devDependencies": {
