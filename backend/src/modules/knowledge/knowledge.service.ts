@@ -10,6 +10,7 @@ import {
   KnowledgeSourceStatus,
   KnowledgeVisibility,
   Prisma,
+  UserRole,
 } from "@prisma/client";
 import { KNOWLEDGE_JOB_REQUESTED_TOPIC } from "../../infrastructure/queue/knowledge-job-message.js";
 import { AppError } from "../../lib/errors.js";
@@ -84,7 +85,7 @@ function readableSourceWhere(sourceId: string, actor: Pick<AuthUser, "id" | "rol
 function mutableSourceWhere(sourceId: string, actor: Pick<AuthUser, "id" | "role">): Prisma.KnowledgeSourceWhereInput {
   return actor.role === "ADMIN"
     ? { id: sourceId }
-    : { id: sourceId, workspace: { members: { some: { userId: actor.id } } } };
+    : { id: sourceId, workspace: { members: { some: { userId: actor.id, role: { in: [UserRole.ADMIN, UserRole.OPERATOR] } } } } };
 }
 
 function readableQueryWhere(queryId: string, actor: Pick<AuthUser, "id" | "role">): Prisma.KnowledgeQueryWhereInput {

@@ -71,7 +71,7 @@ describe("agent tool approvals", () => {
     outboxMock.create.mockResolvedValue({});
     approvalMock.findUniqueOrThrow.mockResolvedValue({ ...approval, status: ApprovalStatus.APPROVED });
 
-    await decideToolApproval(approval.id, { id: "reviewer-1" }, ApprovalStatus.APPROVED, "Reviewed source");
+    await decideToolApproval(approval.id, { id: "reviewer-1", role: UserRole.OPERATOR }, ApprovalStatus.APPROVED, "Reviewed source");
 
     expect(approvalMock.findFirst).toHaveBeenCalledWith({ where: {
       id: approval.id,
@@ -81,16 +81,28 @@ describe("agent tool approvals", () => {
     expect(outboxMock.create).toHaveBeenCalledWith({ data: { topic: "agent.run.resumed", aggregateId: approval.runId, payload: { runId: approval.runId } } });
   });
 
-  it("does not trust a token role without a matching database membership", async () => {
+  it("denies non-global administrators without a matching workspace membership", async () => {
     approvalMock.findFirst.mockResolvedValue(null);
-    await expect(decideToolApproval(approval.id, { id: "jwt-admin" }, ApprovalStatus.APPROVED)).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
+    await expect(decideToolApproval(approval.id, { id: "operator-1", role: UserRole.OPERATOR }, ApprovalStatus.APPROVED)).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
     expect(approvalMock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("allows the current global administrator without workspace membership", async () => {
+    approvalMock.findFirst.mockResolvedValue(approval);
+    approvalMock.updateMany.mockResolvedValue({ count: 1 });
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    outboxMock.create.mockResolvedValue({});
+    approvalMock.findUniqueOrThrow.mockResolvedValue({ ...approval, status: ApprovalStatus.APPROVED });
+
+    await decideToolApproval(approval.id, { id: "global-admin", role: UserRole.ADMIN }, ApprovalStatus.APPROVED);
+
+    expect(approvalMock.findFirst).toHaveBeenCalledWith({ where: { id: approval.id } });
   });
 
   it("uses compare-and-set to reject a concurrent second decision", async () => {
     approvalMock.findFirst.mockResolvedValue(approval);
     approvalMock.updateMany.mockResolvedValue({ count: 0 });
-    await expect(decideToolApproval(approval.id, { id: "reviewer-1" }, ApprovalStatus.REJECTED)).rejects.toMatchObject({ status: 409, code: "APPROVAL_ALREADY_DECIDED" });
+    await expect(decideToolApproval(approval.id, { id: "reviewer-1", role: UserRole.OPERATOR }, ApprovalStatus.REJECTED)).rejects.toMatchObject({ status: 409, code: "APPROVAL_ALREADY_DECIDED" });
     expect(outboxMock.create).not.toHaveBeenCalled();
   });
 });

@@ -14,7 +14,10 @@ vi.mock("../src/middleware/auth.js", () => ({
     next();
   },
 }));
-vi.mock("../src/middleware/workspace-access.js", () => ({ requireWorkspaceAccess: (_request: express.Request, _response: express.Response, next: express.NextFunction) => next() }));
+vi.mock("../src/middleware/workspace-access.js", () => ({
+  requireWorkspaceAccess: (_request: express.Request, _response: express.Response, next: express.NextFunction) => next(),
+  requireWorkspaceRole: () => (_request: express.Request, _response: express.Response, next: express.NextFunction) => next(),
+}));
 vi.mock("../src/modules/agent/agent.service.js", () => agentServiceMock);
 vi.mock("../src/modules/agent/agent-approval.service.js", () => approvalServiceMock);
 

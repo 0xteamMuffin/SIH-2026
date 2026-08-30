@@ -48,7 +48,7 @@ describe("knowledge routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     authState.role = "OPERATOR";
-    workspaceMemberMock.findUnique.mockResolvedValue({ workspaceId, userId: "30000000-0000-4000-8000-000000000001" });
+    workspaceMemberMock.findUnique.mockImplementation(async () => ({ workspaceId, userId: "30000000-0000-4000-8000-000000000001", role: authState.role }));
   });
 
   it("creates a private source through the stable asynchronous envelope", async () => {

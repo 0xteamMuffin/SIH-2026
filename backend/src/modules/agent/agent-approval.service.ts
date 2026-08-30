@@ -56,15 +56,15 @@ export async function pauseForToolApproval(input: {
 
 export async function decideToolApproval(
   approvalId: string,
-  actor: Pick<AuthUser, "id">,
+  actor: Pick<AuthUser, "id" | "role">,
   decision: "APPROVED" | "REJECTED",
   note?: string,
 ) {
+  const accessWhere: Prisma.ToolApprovalWhereInput = actor.role === UserRole.ADMIN
+    ? { id: approvalId }
+    : { id: approvalId, workspace: { members: { some: { userId: actor.id, role: { in: [UserRole.REVIEWER, UserRole.ADMIN] } } } } };
   const approval = await prisma.toolApproval.findFirst({
-    where: {
-      id: approvalId,
-      workspace: { members: { some: { userId: actor.id, role: { in: [UserRole.REVIEWER, UserRole.ADMIN] } } } },
-    },
+    where: accessWhere,
   });
   if (!approval) throw new AppError(404, "Approval not found", "NOT_FOUND");
   if (approval.status !== ApprovalStatus.PENDING) throw new AppError(409, "Approval has already been decided", "APPROVAL_ALREADY_DECIDED");
@@ -73,9 +73,9 @@ export async function decideToolApproval(
   const decided = await prisma.$transaction(async (transaction) => {
     const changed = await transaction.toolApproval.updateMany({
       where: {
+        ...accessWhere,
         id: approval.id,
         status: ApprovalStatus.PENDING,
-        workspace: { members: { some: { userId: actor.id, role: { in: [UserRole.REVIEWER, UserRole.ADMIN] } } } },
       },
       data: { status: decision, decidedBy: actor.id, decisionNote: note, decidedAt },
     });

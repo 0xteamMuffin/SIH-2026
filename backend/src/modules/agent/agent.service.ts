@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { ApprovalStatus, DataClassification, EvidenceKind, Prisma, RunStatus, RunToolCallStatus, ToolRiskLevel } from "@prisma/client";
+import { ApprovalStatus, DataClassification, EvidenceKind, Prisma, RunStatus, RunToolCallStatus, ToolRiskLevel, UserRole } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { audit } from "../../lib/audit.js";
@@ -108,6 +108,11 @@ function accessibleRunWhere(runId: string, actor: Pick<AuthUser, "id" | "role">)
   return actor.role === "ADMIN"
     ? { id: runId }
     : { id: runId, workspace: { members: { some: { userId: actor.id } } } };
+}
+function mutableRunWhere(runId: string, actor: Pick<AuthUser, "id" | "role">): Prisma.AgentRunWhereInput {
+  return actor.role === "ADMIN"
+    ? { id: runId }
+    : { id: runId, workspace: { members: { some: { userId: actor.id, role: { in: [UserRole.ADMIN, UserRole.OPERATOR] } } } } };
 }
 export async function createRun(input: { workspaceId: string; userId: string; task: string; dataClassification: DataClassification; artifactId?: string }) {
   let classification = input.dataClassification;
@@ -295,7 +300,7 @@ export async function getRun(runId: string, actor: Pick<AuthUser, "id" | "role">
   return prisma.agentRun.findFirst({ where: accessibleRunWhere(runId, actor), include: { messages: { orderBy: { createdAt: "asc" } }, toolCalls: { orderBy: { startedAt: "asc" } }, approvals: { orderBy: { requestedAt: "asc" } }, modelInvocations: { orderBy: { attempt: "asc" } }, evidence: { orderBy: { createdAt: "asc" } } } });
 }
 export async function cancelRun(runId: string, actor: Pick<AuthUser, "id" | "role">) {
-  const run = await prisma.agentRun.findFirst({ where: accessibleRunWhere(runId, actor) });
+  const run = await prisma.agentRun.findFirst({ where: mutableRunWhere(runId, actor) });
   if (!run) throw new AppError(404, "Run not found", "NOT_FOUND");
   if (run.status === RunStatus.CANCELLED) return run;
   if (run.status !== RunStatus.PENDING && run.status !== RunStatus.RUNNING && run.status !== RunStatus.WAITING_APPROVAL) throw new AppError(409, "Run is not active", "RUN_NOT_ACTIVE");

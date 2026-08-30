@@ -3,7 +3,7 @@ import { ArtifactExtractionStatus, ArtifactKind, DataClassification } from "@pri
 import multer from "multer";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
-import { requireWorkspaceAccess } from "../../middleware/workspace-access.js";
+import { requireWorkspaceAccess, requireWorkspaceRole } from "../../middleware/workspace-access.js";
 import { AppError } from "../../lib/errors.js";
 import { audit } from "../../lib/audit.js";
 import { prisma } from "../../lib/prisma.js";
@@ -54,7 +54,7 @@ artifactsRouter.get("/artifacts/:artifactId", authenticate, async (request, resp
   } catch (error) { next(error); }
 });
 
-artifactsRouter.post("/workspaces/:workspaceId/artifacts", authenticate, requireWorkspaceAccess, upload.single("file"), async (request, response, next) => {
+artifactsRouter.post("/workspaces/:workspaceId/artifacts", authenticate, requireWorkspaceRole("ADMIN", "OPERATOR"), upload.single("file"), async (request, response, next) => {
   try {
     if (!request.file) throw new AppError(400, "A file is required", "INVALID_INPUT");
     const classification = z.nativeEnum(DataClassification).parse(request.body.classification);

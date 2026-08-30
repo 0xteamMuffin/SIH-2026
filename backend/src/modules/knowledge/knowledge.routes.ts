@@ -2,8 +2,8 @@ import { DataClassification, KnowledgeSourceStatus, KnowledgeVisibility } from "
 import { Router } from "express";
 import { z } from "zod";
 import { AppError } from "../../lib/errors.js";
-import { authenticate, requireRole } from "../../middleware/auth.js";
-import { requireWorkspaceAccess } from "../../middleware/workspace-access.js";
+import { authenticate } from "../../middleware/auth.js";
+import { requireWorkspaceAccess, requireWorkspaceRole } from "../../middleware/workspace-access.js";
 import {
   createKnowledgeQuery,
   createKnowledgeSource,
@@ -64,7 +64,7 @@ knowledgeRouter.get("/workspaces/:workspaceId/knowledge-sources", authenticate, 
   } catch (error) { next(error); }
 });
 
-knowledgeRouter.post("/workspaces/:workspaceId/knowledge-sources", authenticate, requireWorkspaceAccess, requireRole("ADMIN", "OPERATOR"), async (request, response, next) => {
+knowledgeRouter.post("/workspaces/:workspaceId/knowledge-sources", authenticate, requireWorkspaceRole("ADMIN", "OPERATOR"), async (request, response, next) => {
   try {
     const input = createSourceSchema.parse(request.body);
     const result = await createKnowledgeSource({ workspaceId: String(request.params.workspaceId), actor: request.user!, ...input });
@@ -81,14 +81,14 @@ knowledgeRouter.get("/knowledge-sources/:sourceId", authenticate, async (request
   } catch (error) { next(error); }
 });
 
-knowledgeRouter.post("/knowledge-sources/:sourceId/reindex", authenticate, requireRole("ADMIN", "OPERATOR"), async (request, response, next) => {
+knowledgeRouter.post("/knowledge-sources/:sourceId/reindex", authenticate, async (request, response, next) => {
   try {
     const { sourceId } = idParamsSchema.parse(request.params);
     response.status(202).json(await reindexKnowledgeSource(sourceId, request.user!));
   } catch (error) { next(error); }
 });
 
-knowledgeRouter.post("/workspaces/:workspaceId/knowledge-queries", authenticate, requireWorkspaceAccess, requireRole("ADMIN", "OPERATOR"), async (request, response, next) => {
+knowledgeRouter.post("/workspaces/:workspaceId/knowledge-queries", authenticate, requireWorkspaceRole("ADMIN", "OPERATOR"), async (request, response, next) => {
   try {
     const input = createQuerySchema.parse(request.body);
     const result = await createKnowledgeQuery({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, ...input });

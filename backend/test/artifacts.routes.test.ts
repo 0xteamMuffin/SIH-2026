@@ -39,7 +39,7 @@ function createTestApp() {
 describe("artifact routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    workspaceMemberMock.findUnique.mockResolvedValue({ workspaceId, userId: "30000000-0000-4000-8000-000000000001" });
+    workspaceMemberMock.findUnique.mockResolvedValue({ workspaceId, userId: "30000000-0000-4000-8000-000000000001", role: "OPERATOR" });
   });
 
   it("returns the stable list envelope with validated filters and cursor", async () => {
