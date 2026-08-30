@@ -36,6 +36,7 @@ Status: in progress
 - [x] Add deterministic priorities and ordered fallback execution across eligible profiles.
 - [x] Add provider timeouts, cancellation signals, bounded provider-failure retries, and normalized failures.
 - [x] Persist provider, profile, model, attempt status, latency, token usage, finish reason, and sanitized failures.
+- [x] Send bounded PNG, JPEG, and WEBP originals with extraction text to vision profiles without persisting image payloads.
 - [ ] Persist estimated invocation cost from versioned provider pricing metadata.
 - [ ] Add capability and availability checks without sending document content.
 
@@ -77,6 +78,7 @@ Status: pending
 - [x] Integrate local UTF-8 and internal Docling extraction for PDF, image, DOCX, PPTX, XLSX, CSV, Markdown, and text.
 - [x] Run OCR for PDF/image inputs and preserve Docling's layout-aware Markdown structure.
 - [ ] Persist granular page, table, image, slide, and sheet location metadata for citation assembly.
+- [ ] Render and select bounded PDF pages for vision inference; current PDF vision is explicitly extraction-text-only.
 - [x] Store canonical extracted content and checksums in MinIO with retry-safe lifecycle metadata.
 - [ ] Reconcile failed database and object-storage operations.
 

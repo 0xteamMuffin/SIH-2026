@@ -11,8 +11,10 @@ Document understanding uses complementary extraction and vision paths. Neither p
 
 ## Vision interpretation
 
-- Vision-capable model profiles analyze photographs, handwriting, diagrams, engineering drawings, and selected scanned pages.
-- Vision is used when the task explicitly requires visual interpretation or deterministic extraction is empty, partial, or low-confidence.
+- Vision-capable model profiles receive bounded PNG, JPEG, or WEBP originals alongside deterministic OCR/extraction text for visual analysis.
+- TIFF remains a valid extraction source but vision inference fails explicitly until a trusted conversion path is implemented.
+- PDF vision currently uses extraction text only. Page rendering is not implemented, and run result metadata records `mode: extraction-text-only`, an empty `renderedPages` list, and the limitation rather than claiming visual page analysis.
+- Vision is used when task routing explicitly selects the vision capability and the source is a supported original image.
 - Vision output is model analysis, not source evidence. Citations must resolve back to the source page or image.
 - Remote vision is restricted to public or synthetic data. Sovereign mode uses only local vision profiles.
 
@@ -21,9 +23,9 @@ Document understanding uses complementary extraction and vision paths. Neither p
 1. Validate the source signature and classification.
 2. Reuse a completed canonical extraction when available.
 3. Run deterministic extraction for searchable text, layout, and tables.
-4. Select visual pages or the original image when visual semantics are required.
-5. Send only those bounded visual inputs to an eligible vision model.
-6. Combine deterministic facts and clearly-labelled model observations.
-7. Persist source locations, confidence, model invocation metadata, and uncertainties.
+4. Select the original image when visual semantics are required; rendered PDF page selection remains future work.
+5. Send only a bounded original image to eligible vision models, while keeping image data out of durable messages, tool outputs, logs, and invocation telemetry.
+6. Combine deterministic extraction evidence and clearly-labelled model observations.
+7. Persist non-payload visual-input descriptors and model invocation metadata.
 
 This keeps OCR/layout processing replaceable while allowing stronger vision models to improve interpretation without coupling the backend to one parser or model vendor.

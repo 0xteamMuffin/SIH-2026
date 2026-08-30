@@ -12,6 +12,7 @@ Only these settings control model infrastructure:
 | `ALLOW_REMOTE_INFERENCE` | Enables profiles marked `remote`. Must be `false` in sovereign mode. |
 | `REMOTE_MODEL_API_KEY` | Credential used by the example remote provider. Additional providers may reference a different environment variable. |
 | `MODEL_REQUEST_TIMEOUT_MS` | Maximum duration of one model request. |
+| `VISION_MAX_IMAGE_BYTES` | Maximum original-image payload accepted for one vision request. Defaults to 10 MiB and cannot exceed the 25 MiB upload limit. |
 
 Database, storage, authentication, and sandbox variables remain separate because they configure different subsystems.
 
