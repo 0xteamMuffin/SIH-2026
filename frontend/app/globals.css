@@ -32,25 +32,27 @@
   --color-orange:      var(--orange);
 }
 
-/* ── Design tokens (dark glassy professional) ── */
+/* ── Design tokens (orange / dark / white) ── */
 :root {
-  --ink:         #e8e8ed;
-  --ink-2:       #8e8e99;
-  --ink-3:       #58585f;
-  --surface:     rgba(22, 22, 28, 0.88);
-  --canvas:      #0e0e12;
-  --field:       rgba(255, 255, 255, 0.05);
-  --inset:       rgba(0, 0, 0, 0.3);
-  --hover:       rgba(255, 255, 255, 0.06);
-  --hover-2:     rgba(255, 255, 255, 0.10);
-  --line:        rgba(255, 255, 255, 0.08);
-  --line-strong: rgba(255, 255, 255, 0.16);
-  --accent:      #818cf8;
+  --ink:         #f5f5f7;
+  --ink-2:       #a1a1aa;
+  --ink-3:       #52525b;
+  --surface:     rgba(18, 18, 20, 0.92);
+  --canvas:      #090909;
+  --field:       rgba(255, 255, 255, 0.04);
+  --inset:       rgba(0, 0, 0, 0.4);
+  --hover:       rgba(255, 255, 255, 0.05);
+  --hover-2:     rgba(255, 255, 255, 0.09);
+  --line:        rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --accent:      #f97316;
+  --accent-dim:  rgba(249, 115, 22, 0.15);
+  --accent-glow: rgba(249, 115, 22, 0.3);
   --green:       #4ade80;
   --red:         #f87171;
-  --orange:      #fb923c;
-  --tooltip-bg:  rgba(18, 18, 24, 0.95);
-  --tooltip-muted: #58585f;
+  --orange:      #f97316;
+  --tooltip-bg:  rgba(12, 12, 14, 0.96);
+  --tooltip-muted: #52525b;
 }
 
 /* ── Base reset ── */
@@ -97,8 +99,8 @@ input, textarea, select { font: inherit; }
   to   { opacity: 1; transform: translateX(0);    }
 }
 @keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(129, 140, 248, 0); }
-  50%       { box-shadow: 0 0 12px 2px rgba(129, 140, 248, 0.25); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0); }
+  50%       { box-shadow: 0 0 16px 3px rgba(249, 115, 22, 0.25); }
 }
 
 /* reduced-motion: freeze all animations */
@@ -171,12 +173,13 @@ input, textarea, select { font: inherit; }
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  background: var(--ink);
-  color: var(--canvas);
+  background: var(--accent);
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  box-shadow: 0 2px 8px var(--accent-glow);
 }
 
 .sidebar-logo-text {
@@ -229,9 +232,10 @@ input, textarea, select { font: inherit; }
 }
 .sidebar-link:hover { background: var(--hover); color: var(--ink); }
 .sidebar-link.active {
-  background: var(--field);
+  background: var(--accent-dim);
   color: var(--ink);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  border-left: 2px solid var(--accent);
+  box-shadow: none;
 }
 .sidebar-link svg { flex-shrink: 0; transition: transform 200ms ease; }
 .sidebar-link.active svg { transform: scale(1.05); }
@@ -383,10 +387,10 @@ input, textarea, select { font: inherit; }
 .ws-create button {
   width: 32px;
   height: 32px;
-  background: rgba(129, 140, 248, 0.15);
-  border: 1px solid rgba(129, 140, 248, 0.25);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-glow);
   border-radius: 7px;
-  color: #a5b4fc;
+  color: var(--accent);
   font-size: 18px;
   line-height: 1;
   display: flex;
@@ -396,8 +400,8 @@ input, textarea, select { font: inherit; }
   flex-shrink: 0;
 }
 .ws-create button:hover {
-  background: rgba(129, 140, 248, 0.25);
-  border-color: rgba(129, 140, 248, 0.4);
+  background: rgba(249, 115, 22, 0.25);
+  border-color: rgba(249, 115, 22, 0.5);
 }
 
 /* task + trace panel */
@@ -453,23 +457,23 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; font
 }
 .field-input:focus, textarea.field-input:focus {
   outline: none;
-  border-color: rgba(129, 140, 248, 0.4);
-  background: rgba(255,255,255,.06);
-  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.08);
+  border-color: rgba(249, 115, 22, 0.4);
+  background: rgba(255,255,255,.05);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.08);
 }
 .field-input::placeholder { color: var(--ink-3); }
 textarea.field-input { resize: vertical; line-height: 1.6; }
 
 .btn-primary {
-  background: var(--ink);
-  color: var(--canvas);
+  background: var(--accent);
+  color: #fff;
   border-radius: 10px;
   padding: 10px 20px;
   font-size: 13.5px;
   font-weight: 600;
   letter-spacing: 0.01em;
   transition: opacity 150ms, transform 100ms;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  box-shadow: 0 2px 12px var(--accent-glow);
 }
 .btn-primary:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
 .btn-primary:active:not(:disabled) { transform: scale(0.98); }
@@ -513,7 +517,7 @@ textarea.field-input { resize: vertical; line-height: 1.6; }
   letter-spacing: 0.05em;
 }
 .status-pending  { background: rgba(251, 191, 36, .12); color: #fbbf24; }
-.status-running  { background: rgba(129, 140, 248, .12); color: #a5b4fc; animation: glow-pulse 2s ease-in-out infinite; }
+.status-running  { background: rgba(249, 115, 22, .15); color: #fb923c;  animation: glow-pulse 2s ease-in-out infinite; }
 .status-completed{ background: rgba(74, 222, 128, .12); color: var(--green); }
 .status-failed   { background: rgba(248, 113, 113, .12); color: var(--red); }
 .status-cancelled{ background: rgba(255,255,255,.06); color: var(--ink-3); }
@@ -582,7 +586,7 @@ textarea.field-input { resize: vertical; line-height: 1.6; }
   justify-content: center;
   min-height: 100vh;
   background:
-    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(99, 102, 241, 0.12) 0%, transparent 70%),
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(249, 115, 22, 0.1) 0%, transparent 70%),
     var(--canvas);
 }
 .login-card {
@@ -609,12 +613,12 @@ textarea.field-input { resize: vertical; line-height: 1.6; }
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: var(--ink);
-  color: var(--canvas);
+  background: var(--accent);
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  box-shadow: 0 2px 12px var(--accent-glow);
 }
 .login-title { font-size: 20px; font-weight: 700; letter-spacing: -0.03em; }
 .login-sub { font-size: 13px; color: var(--ink-3); }
@@ -630,3 +634,45 @@ form label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px;
 .text-muted { color: var(--ink-3); font-size: 12.5px; }
 .error { color: var(--red); font-size: 12.5px; display: flex; align-items: center; gap: 5px; }
 .divider { height: 1px; background: var(--line); margin: 2px 0; }
+
+/* ── React Flow Controls Overrides ── */
+.react-flow__controls-button {
+  background: var(--surface) !important;
+  border-bottom: 1px solid var(--line) !important;
+  fill: var(--ink-2) !important;
+}
+.react-flow__controls-button:hover {
+  background: var(--hover) !important;
+  fill: var(--ink) !important;
+}
+
+/* ─── Node Animations ────────────────────────────────────────────────────── */
+
+@keyframes nodeAppear {
+  0% { opacity: 0; transform: translateY(20px) scale(0.95); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes nodePulse {
+  0% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.4), 0 4px 24px rgba(0,0,0,0.6); }
+  70% { box-shadow: 0 0 0 10px rgba(249, 115, 22, 0), 0 4px 24px rgba(0,0,0,0.6); }
+  100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0), 0 4px 24px rgba(0,0,0,0.6); }
+}
+
+.node-wrapper {
+  animation: nodeAppear 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.node-running {
+  animation: nodePulse 2s infinite cubic-bezier(0.16, 1, 0.3, 1), nodeAppear 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  border-color: rgba(249, 115, 22, 0.8) !important;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}

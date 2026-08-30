@@ -94,13 +94,18 @@ services:
     networks: [internal, development-egress]
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: build
+    command: npm run dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
     depends_on: [backend]
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     ports: ["3000:3000"]
-    # The UI needs an ingress network so its published browser port works.
-    # It has no direct credentials for internal data services.
     networks: [internal, edge]
 
 networks:

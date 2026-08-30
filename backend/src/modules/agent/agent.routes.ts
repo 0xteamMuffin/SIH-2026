@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { prisma } from "../../lib/prisma.js";
 import { authenticate } from "../../middleware/auth.js";
 import { requireWorkspaceAccess } from "../../middleware/workspace-access.js";
 import { createRun, getRun, cancelRun } from "./agent.service.js";
@@ -10,6 +11,24 @@ agentRouter.post("/workspaces/:workspaceId/runs", requireWorkspaceAccess, async 
   try {
     const input = z.object({ task: z.string().min(10).max(10_000), artifactId: z.string().uuid().optional() }).parse(request.body);
     response.status(202).json({ run: await createRun({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, ...input }) });
+  } catch (error) { next(error); }
+});
+
+agentRouter.get("/workspaces/:workspaceId/runs", requireWorkspaceAccess, async (request, response, next) => {
+  try {
+    const workspaceId = String(request.params.workspaceId);
+    const runs = await prisma.agentRun.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        requester: {
+          select: { id: true, email: true, role: true }
+        },
+        toolCalls: { orderBy: { startedAt: "asc" } },
+        evidence: { orderBy: { createdAt: "asc" } }
+      }
+    });
+    response.json({ runs });
   } catch (error) { next(error); }
 });
 agentRouter.get("/runs/:runId", async (request, response, next) => {

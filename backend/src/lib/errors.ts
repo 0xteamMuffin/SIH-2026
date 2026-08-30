@@ -7,6 +7,7 @@ export class AppError extends Error {
 }
 
 export function errorHandler(error: unknown, _request: Request, response: Response, _next: NextFunction) {
+  console.error("Unhandled API Error:", error);
   const appError = error instanceof AppError ? error : new AppError(500, "Internal server error", "INTERNAL_ERROR");
   response.status(appError.status).json({ error: { code: appError.code, message: appError.message } });
 }
