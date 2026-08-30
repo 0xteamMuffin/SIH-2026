@@ -1,7 +1,13 @@
+import { DataClassification } from "@prisma/client";
 import { env } from "../../config/env.js";
+import { AppError } from "../../lib/errors.js";
+import { allowsExternalInference } from "../../lib/data-classification.js";
 import type { ModelProfile } from "./model-router.js";
 
-export async function askModel(profile: ModelProfile, system: string, prompt: string) {
+export async function askModel(profile: ModelProfile, classification: DataClassification, system: string, prompt: string) {
+  if (profile.provider === "openrouter" && !allowsExternalInference(classification)) {
+    throw new AppError(422, "External inference is restricted to public or synthetic data", "EXTERNAL_INFERENCE_BLOCKED");
+  }
   if (profile.provider === "openrouter" && !env.OPENROUTER_API_KEY) {
     throw new Error("OpenRouter is not configured. Set OPENROUTER_API_KEY or use the sovereign local-model deployment.");
   }

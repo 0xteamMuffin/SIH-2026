@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { DataClassification } from "@prisma/client";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireWorkspaceAccess } from "../../middleware/workspace-access.js";
@@ -8,7 +9,7 @@ import { createRun, getRun, cancelRun } from "./agent.service.js";
 export const agentRouter = Router();
 agentRouter.post("/workspaces/:workspaceId/runs", authenticate, requireWorkspaceAccess, async (request, response, next) => {
   try {
-    const input = z.object({ task: z.string().min(10).max(10_000), artifactId: z.string().uuid().optional() }).parse(request.body);
+    const input = z.object({ task: z.string().min(10).max(10_000), artifactId: z.string().uuid().optional(), dataClassification: z.nativeEnum(DataClassification) }).parse(request.body);
     response.status(202).json({ run: await createRun({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, ...input }) });
   } catch (error) { next(error); }
 });

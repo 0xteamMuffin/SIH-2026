@@ -27,6 +27,13 @@ enum ArtifactKind {
   CODE_OUTPUT
 }
 
+enum DataClassification {
+  PUBLIC
+  SYNTHETIC
+  INTERNAL
+  CONFIDENTIAL
+}
+
 model User {
   id           String            @id @default(uuid()) @db.Uuid
   email        String            @unique
@@ -68,44 +75,46 @@ model WorkspaceMember {
 }
 
 model Artifact {
-  id          String       @id @default(uuid()) @db.Uuid
-  workspaceId String       @map("workspace_id") @db.Uuid
-  createdBy   String       @map("created_by") @db.Uuid
-  kind        ArtifactKind
-  filename    String
-  mimeType    String       @map("mime_type")
-  objectKey   String       @unique @map("object_key")
-  sizeBytes   BigInt       @map("size_bytes")
-  createdAt   DateTime     @default(now()) @map("created_at")
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  creator     User         @relation(fields: [createdBy], references: [id])
-  evidence    Evidence[]
+  id             String             @id @default(uuid()) @db.Uuid
+  workspaceId    String             @map("workspace_id") @db.Uuid
+  createdBy      String             @map("created_by") @db.Uuid
+  kind           ArtifactKind
+  classification DataClassification @default(INTERNAL)
+  filename       String
+  mimeType       String             @map("mime_type")
+  objectKey      String             @unique @map("object_key")
+  sizeBytes      BigInt             @map("size_bytes")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  workspace      Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator        User               @relation(fields: [createdBy], references: [id])
+  evidence       Evidence[]
 
   @@map("artifacts")
 }
 
 model AgentRun {
-  id                String        @id @default(uuid()) @db.Uuid
-  workspaceId       String        @map("workspace_id") @db.Uuid
-  requestedBy       String        @map("requested_by") @db.Uuid
-  task              String
-  taskCapability    String        @map("task_capability")
-  modelProfile      String        @map("model_profile")
-  modelReason       String        @map("model_reason")
-  status            RunStatus     @default(PENDING)
-  state             Json          @default("{}")
-  result            Json?
-  activeWorkspaceId String?       @unique @map("active_workspace_id") @db.Uuid
-  startedAt         DateTime?     @map("started_at")
-  completedAt       DateTime?     @map("completed_at")
-  createdAt         DateTime      @default(now()) @map("created_at")
-  updatedAt         DateTime      @updatedAt @map("updated_at")
-  workspace         Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  requester         User          @relation(fields: [requestedBy], references: [id])
-  messages          RunMessage[]
-  toolCalls         RunToolCall[]
-  evidence          Evidence[]
-  auditEvents       AuditEvent[]
+  id                 String             @id @default(uuid()) @db.Uuid
+  workspaceId        String             @map("workspace_id") @db.Uuid
+  requestedBy        String             @map("requested_by") @db.Uuid
+  task               String
+  taskCapability     String             @map("task_capability")
+  modelProfile       String             @map("model_profile")
+  modelReason        String             @map("model_reason")
+  dataClassification DataClassification @default(INTERNAL) @map("data_classification")
+  status             RunStatus          @default(PENDING)
+  state              Json               @default("{}")
+  result             Json?
+  activeWorkspaceId  String?            @unique @map("active_workspace_id") @db.Uuid
+  startedAt          DateTime?          @map("started_at")
+  completedAt        DateTime?          @map("completed_at")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+  workspace          Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  requester          User               @relation(fields: [requestedBy], references: [id])
+  messages           RunMessage[]
+  toolCalls          RunToolCall[]
+  evidence           Evidence[]
+  auditEvents        AuditEvent[]
 
   @@index([workspaceId, createdAt])
   @@map("agent_runs")

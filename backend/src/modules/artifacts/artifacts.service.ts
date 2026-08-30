@@ -1,11 +1,12 @@
 import crypto from "node:crypto";
+import { DataClassification } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { putArtifact, getArtifact } from "../../infrastructure/storage/artifact-store.js";
 
-export async function createArtifact(input: { workspaceId: string; userId: string; filename: string; mimeType: string; kind: "SOURCE" | "GENERATED_DOCX" | "CODE_OUTPUT"; bytes: Buffer }) {
+export async function createArtifact(input: { workspaceId: string; userId: string; filename: string; mimeType: string; kind: "SOURCE" | "GENERATED_DOCX" | "CODE_OUTPUT"; classification?: DataClassification; bytes: Buffer }) {
   const objectKey = `${input.workspaceId}/${crypto.randomUUID()}-${input.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
   await putArtifact(objectKey, input.bytes, input.mimeType);
-  const artifact = await prisma.artifact.create({ data: { workspaceId: input.workspaceId, createdBy: input.userId, kind: input.kind, filename: input.filename, mimeType: input.mimeType, objectKey, sizeBytes: BigInt(input.bytes.byteLength) } });
+  const artifact = await prisma.artifact.create({ data: { workspaceId: input.workspaceId, createdBy: input.userId, kind: input.kind, classification: input.classification ?? DataClassification.INTERNAL, filename: input.filename, mimeType: input.mimeType, objectKey, sizeBytes: BigInt(input.bytes.byteLength) } });
   // BigInt is not JSON-serializable by default; convert to plain object with sizeBytes as Number.
   return { ...artifact, sizeBytes: Number(artifact.sizeBytes) };
 }

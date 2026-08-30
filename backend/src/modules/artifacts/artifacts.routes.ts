@@ -1,5 +1,7 @@
 import { Router } from "express";
+import { DataClassification } from "@prisma/client";
 import multer from "multer";
+import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireWorkspaceAccess } from "../../middleware/workspace-access.js";
 import { AppError } from "../../lib/errors.js";
@@ -13,8 +15,9 @@ export const artifactsRouter = Router();
 artifactsRouter.post("/workspaces/:workspaceId/artifacts", authenticate, requireWorkspaceAccess, upload.single("file"), async (request, response, next) => {
   try {
     if (!request.file) throw new AppError(400, "A file is required", "INVALID_INPUT");
-    const artifact = await createArtifact({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, filename: request.file.originalname, mimeType: request.file.mimetype || "application/octet-stream", kind: "SOURCE", bytes: request.file.buffer });
-    await audit({ actorId: request.user!.id, workspaceId: artifact.workspaceId, eventType: "ARTIFACT_UPLOADED", metadata: { artifactId: artifact.id, filename: artifact.filename } });
+    const classification = z.nativeEnum(DataClassification).parse(request.body.classification);
+    const artifact = await createArtifact({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, filename: request.file.originalname, mimeType: request.file.mimetype || "application/octet-stream", kind: "SOURCE", classification, bytes: request.file.buffer });
+    await audit({ actorId: request.user!.id, workspaceId: artifact.workspaceId, eventType: "ARTIFACT_UPLOADED", metadata: { artifactId: artifact.id, filename: artifact.filename, classification } });
     response.status(201).json({ artifact });
   } catch (error) { next(error); }
 });

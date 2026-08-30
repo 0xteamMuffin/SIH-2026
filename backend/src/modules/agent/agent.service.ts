@@ -1,8 +1,9 @@
 import crypto from "node:crypto";
-import { Prisma, RunStatus } from "@prisma/client";
+import { DataClassification, Prisma, RunStatus } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { audit } from "../../lib/audit.js";
 import { AppError } from "../../lib/errors.js";
+import { allowsExternalInference, mostRestrictiveClassification } from "../../lib/data-classification.js";
 import { askModel } from "../../infrastructure/models/model-provider.js";
 import { selectModel, type RoutingDecision } from "../../infrastructure/models/model-router.js";
 import { runCode } from "../../infrastructure/sandbox/sandbox-client.js";
@@ -39,10 +40,20 @@ function accessibleRunWhere(runId: string, actor: Pick<AuthUser, "id" | "role">)
     ? { id: runId }
     : { id: runId, workspace: { members: { some: { userId: actor.id } } } };
 }
-export async function createRun(input: { workspaceId: string; userId: string; task: string; artifactId?: string }) {
+export async function createRun(input: { workspaceId: string; userId: string; task: string; dataClassification: DataClassification; artifactId?: string }) {
+  let classification = input.dataClassification;
+  if (input.artifactId) {
+    const source = await findArtifact(input.artifactId);
+    if (!source || source.workspaceId !== input.workspaceId) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
+    classification = mostRestrictiveClassification(classification, source.classification);
+  }
   const decision = selectModel(input.task, Boolean(input.artifactId));
-  const run = await prisma.agentRun.create({ data: { workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, activeWorkspaceId: input.workspaceId } });
-  await audit({ actorId: input.userId, workspaceId: input.workspaceId, runId: run.id, eventType: "AGENT_RUN_CREATED", metadata: { capability: decision.capability, modelProfile: decision.profile.id, sovereign: decision.profile.sovereign } });
+  if (decision.profile.provider === "openrouter" && !allowsExternalInference(classification)) {
+    await audit({ actorId: input.userId, workspaceId: input.workspaceId, eventType: "EXTERNAL_INFERENCE_BLOCKED", metadata: { classification, modelProfile: decision.profile.id } });
+    throw new AppError(422, "External inference is restricted to public or synthetic data", "EXTERNAL_INFERENCE_BLOCKED");
+  }
+  const run = await prisma.agentRun.create({ data: { workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, activeWorkspaceId: input.workspaceId } });
+  await audit({ actorId: input.userId, workspaceId: input.workspaceId, runId: run.id, eventType: "AGENT_RUN_CREATED", metadata: { capability: decision.capability, classification, modelProfile: decision.profile.id, sovereign: decision.profile.sovereign } });
   void processRun(run.id, decision, input.artifactId).catch(() => undefined);
   return run;
 }
@@ -64,13 +75,13 @@ async function processRun(runId: string, decision: RoutingDecision, sourceArtifa
       await appendMessage(run.id, ++turn, "tool", { tool: "artifact.read", result: read });
     }
     let analysis = "No model analysis was required.";
-    const analyzed = await executeTool(run.id, "model.analyze", { model: decision.profile.id, capability: decision.capability }, async () => { const model = await askModel(decision.profile, "You are an on-premise industrial workbench assistant. Produce concise factual findings only from supplied source text. State uncertainty for unreadable scans. Never invent measurements, approvals, or citations.", `Task: ${run.task}\n\nSource material:\n${sourceText}`); analysis = model.text.trim() || "The model returned no analysis."; return { ok: true, summary: "Model analysis completed", data: { characters: analysis.length } }; });
+    const analyzed = await executeTool(run.id, "model.analyze", { model: decision.profile.id, capability: decision.capability }, async () => { const model = await askModel(decision.profile, run.dataClassification, "You are an on-premise industrial workbench assistant. Produce concise factual findings only from supplied source text. State uncertainty for unreadable scans. Never invent measurements, approvals, or citations.", `Task: ${run.task}\n\nSource material:\n${sourceText}`); analysis = model.text.trim() || "The model returned no analysis."; return { ok: true, summary: "Model analysis completed", data: { characters: analysis.length } }; });
     if (!analyzed.ok) analysis = `${analyzed.summary}. Review the source artifact manually.`;
     await appendMessage(run.id, ++turn, "tool", { tool: "model.analyze", result: analyzed });
     evidence.push(await saveEvidence(run.id, undefined, "model-analysis", "Model analysis", analysis, [analysis]));
     const result: Record<string, unknown> = { analysis, evidenceIds: evidence.map((item) => item.id), model: decision.profile.id, capability: decision.capability };
     if (decision.capability === "code") result.sandbox = await executeTool(run.id, "sandbox.execute", { language: "javascript" }, async () => ({ ...(await runCode(sourceArtifactId ? sourceText : "console.log('Sandbox verification complete')")), ok: true, summary: "Sandbox execution completed" }));
-    else if (sourceArtifactId) await executeTool(run.id, "deliverable.createApprovalNote", { format: "docx" }, async () => { const artifact = await createArtifact({ workspaceId: run.workspaceId, userId: run.requestedBy, filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", kind: "GENERATED_DOCX", bytes: Buffer.from(await approvalNoteDocx(run.task, evidence)) }); result.artifact = artifact; return { ok: true, summary: "Generated approval-note DOCX", data: { artifactId: artifact.id } }; });
+    else if (sourceArtifactId) await executeTool(run.id, "deliverable.createApprovalNote", { format: "docx" }, async () => { const artifact = await createArtifact({ workspaceId: run.workspaceId, userId: run.requestedBy, filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", kind: "GENERATED_DOCX", classification: run.dataClassification, bytes: Buffer.from(await approvalNoteDocx(run.task, evidence)) }); result.artifact = artifact; return { ok: true, summary: "Generated approval-note DOCX", data: { artifactId: artifact.id } }; });
     await appendMessage(run.id, ++turn, "assistant", result);
     const completed = await prisma.agentRun.updateMany({ where: { id: run.id, status: RunStatus.RUNNING }, data: { status: RunStatus.COMPLETED, result: toJson(result), activeWorkspaceId: null, completedAt: new Date() } });
     if (completed.count > 0) await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId: run.id, eventType: "AGENT_RUN_COMPLETED", metadata: { sovereign: decision.profile.sovereign } });
