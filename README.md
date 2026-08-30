@@ -6,6 +6,8 @@ Read [the end-to-end guide](./docs/END_TO_END.md) for architecture, data flow, a
 
 Backend delivery is tracked in [the backend roadmap](./docs/BACKEND_ROADMAP.md). Deferred UI integration is tracked separately in [the frontend backlog](./docs/FRONTEND_BACKLOG.md).
 
+Inference providers and models are configured through [the vendor-neutral model registry](./docs/MODEL_CONFIGURATION.md).
+
 
 ## Quick start
 
@@ -13,9 +15,9 @@ Backend delivery is tracked in [the backend roadmap](./docs/BACKEND_ROADMAP.md).
 2. Start the development stack: `docker compose up --build`.
 3. Open the workbench at `http://localhost:3000` and sign in using the seeded admin credentials from `.env`.
 
-`development` uses OpenRouter only when `OPENROUTER_API_KEY` is configured. It is deliberately labelled non-sovereign in the UI and audit stream.
+Development can use any configured remote OpenAI-compatible endpoint when `ALLOW_REMOTE_INFERENCE=true`. Remote inference accepts only public or synthetic data and is non-sovereign.
 
-For an air-gapped deployment, start `docker compose -f docker-compose.yml -f docker-compose.sovereign.yml up --build`, set `MODEL_PROVIDER=local`, and point `LOCAL_MODEL_BASE_URL` at an internal OpenAI-compatible model server. The sovereign override removes the development egress network and uses only the internal application network.
+For an air-gapped deployment, start `docker compose -f docker-compose.yml -f docker-compose.sovereign.yml up --build`. The sovereign override disables every remote model profile, removes remote credentials and backend egress, and uses only local profiles from `backend/config/models.json`.
 
 ## Included services
 

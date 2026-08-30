@@ -15,16 +15,10 @@ x-backend-env: &backend-env
   QDRANT_URL: ${QDRANT_URL}
   SANDBOX_RUNNER_URL: http://sandbox-runner:4100
   APP_MODE: ${APP_MODE}
-  MODEL_PROVIDER: ${MODEL_PROVIDER}
-  MODEL_REGISTRY_JSON: ${MODEL_REGISTRY_JSON:-}
+  MODEL_CONFIG_PATH: /app/config/models.json
+  ALLOW_REMOTE_INFERENCE: ${ALLOW_REMOTE_INFERENCE:-false}
   MODEL_REQUEST_TIMEOUT_MS: ${MODEL_REQUEST_TIMEOUT_MS:-120000}
-  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-  OPENROUTER_MODEL: ${OPENROUTER_MODEL}
-  LOCAL_MODEL_BASE_URL: ${LOCAL_MODEL_BASE_URL}
-  LOCAL_MODEL_API_KEY: ${LOCAL_MODEL_API_KEY}
-  LOCAL_GENERAL_MODEL: ${LOCAL_GENERAL_MODEL}
-  LOCAL_VISION_MODEL: ${LOCAL_VISION_MODEL}
-  LOCAL_CODE_MODEL: ${LOCAL_CODE_MODEL}
+  REMOTE_MODEL_API_KEY: ${REMOTE_MODEL_API_KEY:-}
 
 services:
   postgres:
@@ -90,6 +84,7 @@ services:
       qdrant: { condition: service_started }
       sandbox-runner: { condition: service_started }
     environment: *backend-env
+    extra_hosts: ["host.docker.internal:host-gateway"]
     ports: ["4000:4000"]
     # Development adapter only: this is the sole app service with egress.
     # docker-compose.sovereign.yml removes this network.

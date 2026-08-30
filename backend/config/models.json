@@ -1,0 +1,59 @@
+{
+  "providers": [
+    {
+      "id": "development-remote",
+      "location": "remote",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKeyEnv": "REMOTE_MODEL_API_KEY"
+    },
+    {
+      "id": "local-runtime",
+      "location": "local",
+      "baseUrl": "http://host.docker.internal:11434/v1"
+    }
+  ],
+  "models": [
+    {
+      "id": "remote-general",
+      "providerId": "development-remote",
+      "modelId": "openrouter/free",
+      "capabilities": ["general", "document"],
+      "priority": 10
+    },
+    {
+      "id": "remote-vision",
+      "providerId": "development-remote",
+      "modelId": "openrouter/free",
+      "capabilities": ["vision"],
+      "priority": 10
+    },
+    {
+      "id": "remote-code",
+      "providerId": "development-remote",
+      "modelId": "openrouter/free",
+      "capabilities": ["code"],
+      "priority": 10
+    },
+    {
+      "id": "local-general",
+      "providerId": "local-runtime",
+      "modelId": "qwen3.5:4b",
+      "capabilities": ["general", "document"],
+      "priority": 100
+    },
+    {
+      "id": "local-vision",
+      "providerId": "local-runtime",
+      "modelId": "qwen3.5:4b",
+      "capabilities": ["vision"],
+      "priority": 100
+    },
+    {
+      "id": "local-code",
+      "providerId": "local-runtime",
+      "modelId": "qwen2.5-coder:7b",
+      "capabilities": ["code"],
+      "priority": 100
+    }
+  ]
+}

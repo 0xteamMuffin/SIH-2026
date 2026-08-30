@@ -13,6 +13,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
 COPY prisma ./prisma
+COPY config ./config
 RUN npm install --omit=dev && npx prisma generate && npm cache clean --force
 COPY --from=build /app/dist ./dist
 USER node

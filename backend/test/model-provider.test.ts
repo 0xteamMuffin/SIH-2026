@@ -3,9 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { askModel } from "../src/infrastructure/models/model-provider.js";
 import type { ModelProfile } from "../src/infrastructure/models/model-registry.js";
 
-const openRouterProfile: ModelProfile = {
-  id: "openrouter-test",
-  provider: "openrouter",
+const remoteProfile: ModelProfile = {
+  id: "remote-test",
+  providerId: "remote-provider",
+  location: "remote",
+  baseUrl: "https://models.example/v1",
+  apiKeyEnv: "REMOTE_MODEL_API_KEY",
   modelId: "test/model",
   capabilities: ["general"],
   priority: 100,
@@ -13,7 +16,7 @@ const openRouterProfile: ModelProfile = {
   sovereign: false,
   maxOutputTokens: 2_048,
 };
-const localProfile: ModelProfile = { ...openRouterProfile, id: "local-test", provider: "local", endpoint: "http://localhost:11434/v1", modelId: "local/model", sovereign: true };
+const localProfile: ModelProfile = { ...remoteProfile, id: "local-test", providerId: "local-provider", location: "local", baseUrl: "http://localhost:11434/v1", apiKeyEnv: undefined, modelId: "local/model", sovereign: true };
 
 describe("model provider policy", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -21,17 +24,17 @@ describe("model provider policy", () => {
   it.each([DataClassification.INTERNAL, DataClassification.CONFIDENTIAL])("blocks %s data before making an external request", async (classification) => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
-    await expect(askModel(openRouterProfile, classification, "system", "prompt")).rejects.toMatchObject({
+    await expect(askModel(remoteProfile, classification, "system", "prompt")).rejects.toMatchObject({
       status: 422,
       code: "EXTERNAL_INFERENCE_BLOCKED",
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("normalizes missing OpenRouter configuration", async () => {
+  it("normalizes missing remote provider credentials", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
-    await expect(askModel(openRouterProfile, DataClassification.PUBLIC, "system", "prompt")).rejects.toMatchObject({ status: 503, code: "MODEL_PROVIDER_NOT_CONFIGURED" });
+    await expect(askModel(remoteProfile, DataClassification.PUBLIC, "system", "prompt")).rejects.toMatchObject({ status: 503, code: "MODEL_PROVIDER_NOT_CONFIGURED" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -43,7 +46,7 @@ describe("model provider policy", () => {
 
     const result = await askModel(localProfile, DataClassification.CONFIDENTIAL, "system", "prompt");
 
-    expect(result).toMatchObject({ text: "Completed analysis.", provider: "local", modelId: "local/model", finishReason: "stop", usage: { promptTokens: 12, completionTokens: 4, totalTokens: 16 } });
+    expect(result).toMatchObject({ text: "Completed analysis.", provider: "local-provider", modelId: "local/model", finishReason: "stop", usage: { promptTokens: 12, completionTokens: 4, totalTokens: 16 } });
     expect(fetchMock).toHaveBeenCalledWith("http://localhost:11434/v1/chat/completions", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     const request = fetchMock.mock.calls[0][1];
     expect(JSON.parse(String(request?.body))).toMatchObject({ model: "local/model", max_tokens: 2_048 });

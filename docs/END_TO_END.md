@@ -8,7 +8,7 @@ SIH-2026 is an internal AI workbench for confidential industrial documents, imag
 
 **Air-gapped** is stricter: the environment has no route to the public internet. It is enforced by network policy, not by a model instruction. `docker-compose.sovereign.yml` removes the backend's development-egress network; core services use an internal Docker network, and code jobs run with `--network none`. A real deployment must also block outbound traffic at the host firewall/network boundary.
 
-OpenRouter development mode is **not sovereign**: uploaded text is sent to OpenRouter for inference. It is useful only until a local model endpoint is available.
+Remote development inference is **not sovereign**: public or synthetic task data is sent to the configured endpoint. Remote access is optional and disabled in sovereign mode.
 
 ## How a document task works
 
@@ -17,7 +17,7 @@ OpenRouter development mode is **not sovereign**: uploaded text is sent to OpenR
 3. The operator starts a task. The router classifies it as document, vision, code, or general and records the chosen model profile and routing reason.
 4. A durable agent run is created. It records messages, tool calls/results, evidence, artifacts, and audit events in PostgreSQL.
 5. The source file is read through the scoped artifact tool. The current scaffold extracts a bounded text preview; binary/scanned files are honestly marked as needing OCR/vision review.
-6. The selected provider analyses the source. In development this is OpenRouter; in sovereign mode it is an internal OpenAI-compatible endpoint.
+6. The selected provider analyses the source. Development may allow a configured remote endpoint; sovereign mode permits only internal OpenAI-compatible endpoints.
 7. Findings become persisted evidence. The document flow generates an approval-note DOCX with source references, saves it to MinIO, and exposes an authenticated download.
 
 ## Code task
@@ -26,7 +26,7 @@ Code wording routes a task to the code model profile. The sandbox runner creates
 
 ## Start modes
 
-Development (requires an OpenRouter key):
+Development (optionally allows a configured remote model endpoint):
 
 ```bash
 cp .env.example .env
@@ -39,7 +39,7 @@ Sovereign mode (requires an already-running internal model endpoint; Compose int
 docker compose -f docker-compose.yml -f docker-compose.sovereign.yml up --build
 ```
 
-Set `LOCAL_MODEL_BASE_URL` to the organisation-managed internal endpoint, such as `http://internal-model-server:port/v1`, and configure general, vision, and code model IDs.
+Configure providers, endpoints, model IDs, capabilities, and routing priorities in `backend/config/models.json`. Provider credentials are referenced by environment-variable name and are never stored in that file.
 
 ## Current boundaries
 

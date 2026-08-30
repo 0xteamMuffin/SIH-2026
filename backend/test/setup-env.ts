@@ -11,5 +11,5 @@ process.env.MINIO_BUCKET = "test-artifacts";
 process.env.QDRANT_URL = "http://localhost:6333";
 process.env.SANDBOX_RUNNER_URL = "http://localhost:4100";
 process.env.APP_MODE = "development";
-process.env.MODEL_PROVIDER = "openrouter";
-process.env.OPENROUTER_MODEL = "test/model";
+process.env.MODEL_CONFIG_PATH = "config/models.json";
+process.env.ALLOW_REMOTE_INFERENCE = "true";

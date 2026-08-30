@@ -48,7 +48,7 @@ export async function createRun(input: { workspaceId: string; userId: string; ta
     classification = mostRestrictiveClassification(classification, source.classification);
   }
   const decision = selectModel(input.task, Boolean(input.artifactId));
-  if (decision.profile.provider === "openrouter" && !allowsExternalInference(classification)) {
+  if (decision.profile.location === "remote" && !allowsExternalInference(classification)) {
     await audit({ actorId: input.userId, workspaceId: input.workspaceId, eventType: "EXTERNAL_INFERENCE_BLOCKED", metadata: { classification, modelProfile: decision.profile.id } });
     throw new AppError(422, "External inference is restricted to public or synthetic data", "EXTERNAL_INFERENCE_BLOCKED");
   }

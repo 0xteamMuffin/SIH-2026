@@ -1,70 +1,81 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { z } from "zod";
 import { env } from "../../config/env.js";
 
 export const modelCapabilities = ["general", "document", "vision", "code", "embedding", "reranking"] as const;
 export type ModelCapability = typeof modelCapabilities[number];
 export type TaskCapability = Extract<ModelCapability, "general" | "document" | "vision" | "code">;
-export type ModelProvider = "openrouter" | "local";
+export type ProviderLocation = "local" | "remote";
 
 export type ModelProfile = {
   id: string;
-  provider: ModelProvider;
+  providerId: string;
+  location: ProviderLocation;
+  baseUrl: string;
+  apiKeyEnv?: string;
   modelId: string;
   capabilities: ModelCapability[];
   priority: number;
   enabled: boolean;
-  endpoint?: string;
   sovereign: boolean;
   maxOutputTokens: number;
 };
 
-const profileSchema = z.object({
+const providerSchema = z.object({
   id: z.string().min(1).regex(/^[a-z0-9][a-z0-9._-]*$/i),
-  provider: z.enum(["openrouter", "local"]),
+  location: z.enum(["local", "remote"]),
+  baseUrl: z.string().url(),
+  apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
+});
+
+const modelSchema = z.object({
+  id: z.string().min(1).regex(/^[a-z0-9][a-z0-9._-]*$/i),
+  providerId: z.string().min(1),
   modelId: z.string().min(1),
   capabilities: z.array(z.enum(modelCapabilities)).min(1),
   priority: z.number().int().min(0).default(100),
   enabled: z.boolean().default(true),
-  endpoint: z.string().url().optional(),
   maxOutputTokens: z.number().int().min(1).max(32_768).default(2_048),
 });
 
-const registrySchema = z.array(profileSchema).min(1).superRefine((profiles, context) => {
-  const ids = new Set<string>();
-  for (const [index, profile] of profiles.entries()) {
-    if (ids.has(profile.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate model profile '${profile.id}'`, path: [index, "id"] });
-    ids.add(profile.id);
+const configurationSchema = z.object({
+  providers: z.array(providerSchema).min(1),
+  models: z.array(modelSchema).min(1),
+}).superRefine((configuration, context) => {
+  const providerIds = new Set<string>();
+  for (const [index, provider] of configuration.providers.entries()) {
+    if (providerIds.has(provider.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate provider '${provider.id}'`, path: ["providers", index, "id"] });
+    providerIds.add(provider.id);
+  }
+  const modelIds = new Set<string>();
+  for (const [index, model] of configuration.models.entries()) {
+    if (modelIds.has(model.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate model profile '${model.id}'`, path: ["models", index, "id"] });
+    if (!providerIds.has(model.providerId)) context.addIssue({ code: z.ZodIssueCode.custom, message: `Unknown provider '${model.providerId}'`, path: ["models", index, "providerId"] });
+    modelIds.add(model.id);
   }
 });
 
-export function parseModelRegistry(input: string): ModelProfile[] {
+export function parseModelConfiguration(input: string): ModelProfile[] {
   let value: unknown;
   try {
     value = JSON.parse(input);
   } catch {
-    throw new Error("MODEL_REGISTRY_JSON must contain valid JSON");
+    throw new Error("Model configuration must contain valid JSON");
   }
-  return registrySchema.parse(value).map((profile) => ({ ...profile, sovereign: profile.provider === "local" }));
-}
-
-function defaultProfiles(): ModelProfile[] {
-  if (env.MODEL_PROVIDER === "openrouter") {
-    return [{ id: "openrouter-development", provider: "openrouter", modelId: env.OPENROUTER_MODEL, capabilities: ["document", "vision", "code", "general"], priority: 100, enabled: true, sovereign: false, maxOutputTokens: 2_048 }];
-  }
-  return [
-    { id: "local-general", provider: "local", endpoint: env.LOCAL_MODEL_BASE_URL, modelId: env.LOCAL_GENERAL_MODEL, capabilities: ["general", "document"], priority: 100, enabled: true, sovereign: true, maxOutputTokens: 2_048 },
-    { id: "local-vision", provider: "local", endpoint: env.LOCAL_MODEL_BASE_URL, modelId: env.LOCAL_VISION_MODEL, capabilities: ["vision", "document"], priority: 50, enabled: true, sovereign: true, maxOutputTokens: 2_048 },
-    { id: "local-code", provider: "local", endpoint: env.LOCAL_MODEL_BASE_URL, modelId: env.LOCAL_CODE_MODEL, capabilities: ["code"], priority: 50, enabled: true, sovereign: true, maxOutputTokens: 2_048 },
-  ];
+  const configuration = configurationSchema.parse(value);
+  const providers = new Map(configuration.providers.map((provider) => [provider.id, provider]));
+  return configuration.models.map((model) => {
+    const provider = providers.get(model.providerId)!;
+    return { ...model, location: provider.location, baseUrl: provider.baseUrl.replace(/\/$/, ""), apiKeyEnv: provider.apiKeyEnv, sovereign: provider.location === "local" };
+  });
 }
 
 export function modelProfiles(): ModelProfile[] {
-  const configured = env.MODEL_REGISTRY_JSON?.trim() ? parseModelRegistry(env.MODEL_REGISTRY_JSON) : defaultProfiles();
-  const profiles = configured
-    .filter((profile) => profile.enabled && profile.provider === env.MODEL_PROVIDER)
-    .map((profile) => profile.provider === "local" ? { ...profile, endpoint: profile.endpoint ?? env.LOCAL_MODEL_BASE_URL } : profile)
+  const path = resolve(env.MODEL_CONFIG_PATH);
+  const profiles = parseModelConfiguration(readFileSync(path, "utf8"))
+    .filter((profile) => profile.enabled && (profile.location === "local" || env.ALLOW_REMOTE_INFERENCE))
     .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
-  if (profiles.length === 0) throw new Error(`No enabled model profiles are configured for provider '${env.MODEL_PROVIDER}'`);
-  if (profiles.some((profile) => profile.provider === "local" && !profile.endpoint)) throw new Error("Every local model profile requires an endpoint");
+  if (profiles.length === 0) throw new Error("No enabled model profiles are available under the current inference policy");
   return profiles;
 }
