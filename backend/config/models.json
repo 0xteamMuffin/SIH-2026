@@ -84,7 +84,7 @@
       "providerId": "development-remote",
       "modelId": "openrouter/free",
       "capabilities": ["general", "document", "vision", "code"],
-      "priority": 100
+      "priority": 900
     },
     {
       "id": "groq-general",
@@ -124,7 +124,7 @@
     {
       "id": "cloudflare-vision",
       "providerId": "cloudflare",
-      "modelId": "@cf/meta/llama-3.2-11b-vision-instruct",
+      "modelId": "@cf/qwen/qwen3.8-27b",
       "capabilities": ["vision"],
       "priority": 500
     },
