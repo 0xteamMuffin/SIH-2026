@@ -4,6 +4,7 @@ import { authRouter } from "./modules/auth/auth.routes.js";
 import { workspacesRouter } from "./modules/workspaces/workspaces.routes.js";
 import { artifactsRouter } from "./modules/artifacts/artifacts.routes.js";
 import { agentRouter } from "./modules/agent/agent.routes.js";
+import { knowledgeRouter } from "./modules/knowledge/knowledge.routes.js";
 import { env } from "./config/env.js";
 import { getQdrantVectorStore } from "./infrastructure/vector-store/qdrant-vector-store.js";
 import type { VectorStoreAdmin } from "./infrastructure/vector-store/vector-store-admin.js";
@@ -30,7 +31,7 @@ export function createApp(dependencies: { vectorStore: Pick<VectorStoreAdmin, "i
     });
   });
   mountApiRateLimits(application);
-  application.use("/api/auth", authRouter); application.use("/api/workspaces", workspacesRouter); application.use("/api", artifactsRouter); application.use("/api", agentRouter);
+  application.use("/api/auth", authRouter); application.use("/api/workspaces", workspacesRouter); application.use("/api", artifactsRouter); application.use("/api", agentRouter); application.use("/api", knowledgeRouter);
   application.use(notFoundHandler);
   application.use(errorHandler);
   return application;
