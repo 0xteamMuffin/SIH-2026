@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const AGENT_RUN_REQUESTED_TOPIC = "agent.run.requested";
 export const AGENT_RUN_RECOVERED_TOPIC = "agent.run.recovered";
+export const AGENT_RUN_RESUMED_TOPIC = "agent.run.resumed";
 export const AGENT_RUN_CANCELLED_TOPIC = "agent.run.cancelled";
 
 const agentRunRequestedSchema = z.object({ runId: z.string().uuid() }).strict();

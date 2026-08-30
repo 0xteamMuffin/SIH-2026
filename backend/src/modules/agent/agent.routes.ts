@@ -1,10 +1,11 @@
 import { Router } from "express";
-import { DataClassification } from "@prisma/client";
+import { ApprovalStatus, DataClassification } from "@prisma/client";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireWorkspaceAccess } from "../../middleware/workspace-access.js";
 import { AppError } from "../../lib/errors.js";
 import { createRun, getRun, cancelRun } from "./agent.service.js";
+import { decideToolApproval } from "./agent-approval.service.js";
 
 export const agentRouter = Router();
 agentRouter.post("/workspaces/:workspaceId/runs", authenticate, requireWorkspaceAccess, async (request, response, next) => {
@@ -22,4 +23,14 @@ agentRouter.get("/runs/:runId", authenticate, async (request, response, next) =>
 });
 agentRouter.post("/runs/:runId/cancel", authenticate, async (request, response, next) => {
   try { response.json({ run: await cancelRun(String(request.params.runId), request.user!) }); } catch (error) { next(error); }
+});
+agentRouter.post("/agent-approvals/:approvalId/decision", authenticate, async (request, response, next) => {
+  try {
+    const input = z.object({
+      decision: z.enum([ApprovalStatus.APPROVED, ApprovalStatus.REJECTED]),
+      note: z.string().trim().min(1).max(2_000).optional(),
+    }).strict().parse(request.body);
+    const approvalId = z.string().uuid().parse(request.params.approvalId);
+    response.json({ approval: await decideToolApproval(approvalId, request.user!, input.decision, input.note) });
+  } catch (error) { next(error); }
 });

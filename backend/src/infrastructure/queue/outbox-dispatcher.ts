@@ -2,7 +2,7 @@ import type { OutboxEvent, PrismaClient } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
-import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_REQUESTED_TOPIC } from "./agent-run-message.js";
+import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_REQUESTED_TOPIC, AGENT_RUN_RESUMED_TOPIC } from "./agent-run-message.js";
 import { KNOWLEDGE_JOB_REQUESTED_TOPIC, parseKnowledgeJobRequested } from "./knowledge-job-message.js";
 import { publishAgentRunCancelled, publishAgentRunRequested, publishKnowledgeJobRequested } from "./publisher.js";
 import { knowledgeRabbitChannel, rabbitChannel } from "./rabbitmq.js";
@@ -32,7 +32,7 @@ async function publishEvent(event: OutboxEvent) {
 
 export async function dispatchOutboxBatch(store: OutboxStore = prisma, publish: PublishOutboxEvent = publishEvent, now = new Date()) {
   const events = await store.outboxEvent.findMany({
-    where: { topic: { in: [AGENT_RUN_REQUESTED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_CANCELLED_TOPIC, KNOWLEDGE_JOB_REQUESTED_TOPIC] }, publishedAt: null, availableAt: { lte: now } },
+    where: { topic: { in: [AGENT_RUN_REQUESTED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_RESUMED_TOPIC, AGENT_RUN_CANCELLED_TOPIC, KNOWLEDGE_JOB_REQUESTED_TOPIC] }, publishedAt: null, availableAt: { lte: now } },
     orderBy: { createdAt: "asc" },
     take: env.OUTBOX_BATCH_SIZE,
   });

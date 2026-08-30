@@ -29,7 +29,7 @@ describe("outbox dispatcher", () => {
       data: expect.objectContaining({ publishedAt: expect.any(Date), lastError: null }),
     }));
     expect(store.outboxEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ topic: { in: expect.arrayContaining(["agent.run.requested", "knowledge.job.requested"]) } }),
+      where: expect.objectContaining({ topic: { in: expect.arrayContaining(["agent.run.requested", "agent.run.resumed", "knowledge.job.requested"]) } }),
     }));
   });
 

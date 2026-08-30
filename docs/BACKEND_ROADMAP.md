@@ -105,15 +105,15 @@ Acceptance gate: retrieval returns only authorized passages with resolvable cita
 
 ## Phase 6: Agent runtime and approvals
 
-Status: pending
+Status: in progress
 
-- [ ] Replace the fixed workflow with a bounded plan-act-observe loop.
-- [ ] Register typed tools with validated inputs, outputs, permissions, and idempotency keys.
-- [ ] Enforce maximum turns, tool calls, token budgets, and execution deadlines.
-- [ ] Require human approval before code execution and future consequential actions.
-- [ ] Resume paused runs after approval without replaying completed tools.
-- [ ] Separate sourced evidence from model-generated analysis.
-- [ ] Persist concise progress events without exposing hidden reasoning.
+- [x] Replace the fixed workflow with a persisted bounded phase loop.
+- [x] Register typed tools with validated inputs, risk policy, and idempotency keys.
+- [ ] Enforce maximum turns, tool calls, token budgets, and execution deadlines. Turns, tool calls, and deadlines are enforced; token budgets remain model-profile scoped.
+- [x] Require human approval before code execution and future high-risk actions.
+- [x] Resume paused runs after approval without replaying completed tool side effects.
+- [x] Separate sourced evidence from model-generated output.
+- [x] Persist concise progress events without exposing hidden reasoning.
 
 Acceptance gate: a scanned-report workflow plans, retrieves, requests required approval, generates a cited deliverable, and can resume safely after interruption.
 

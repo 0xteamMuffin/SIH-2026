@@ -16,9 +16,38 @@ enum UserRole {
 enum RunStatus {
   PENDING
   RUNNING
+  WAITING_APPROVAL
   COMPLETED
   FAILED
   CANCELLED
+}
+
+enum RunToolCallStatus {
+  PENDING
+  RUNNING
+  WAITING_APPROVAL
+  COMPLETED
+  FAILED
+  REJECTED
+  CANCELLED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ToolRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum EvidenceKind {
+  SOURCE
+  MODEL_OUTPUT
 }
 
 enum ArtifactKind {
@@ -125,18 +154,19 @@ enum KnowledgeVectorDistance {
 }
 
 model User {
-  id               String            @id @default(uuid()) @db.Uuid
-  email            String            @unique
-  passwordHash     String            @map("password_hash")
-  role             UserRole          @default(OPERATOR)
-  createdAt        DateTime          @default(now()) @map("created_at")
-  workspaces       Workspace[]       @relation("WorkspaceCreator")
-  memberships      WorkspaceMember[]
-  artifacts        Artifact[]
-  runs             AgentRun[]
-  auditEvents      AuditEvent[]
-  knowledgeSources KnowledgeSource[]
-  knowledgeQueries KnowledgeQuery[]
+  id                String            @id @default(uuid()) @db.Uuid
+  email             String            @unique
+  passwordHash      String            @map("password_hash")
+  role              UserRole          @default(OPERATOR)
+  createdAt         DateTime          @default(now()) @map("created_at")
+  workspaces        Workspace[]       @relation("WorkspaceCreator")
+  memberships       WorkspaceMember[]
+  artifacts         Artifact[]
+  runs              AgentRun[]
+  auditEvents       AuditEvent[]
+  knowledgeSources  KnowledgeSource[]
+  knowledgeQueries  KnowledgeQuery[]
+  approvalDecisions ToolApproval[]    @relation("ApprovalDecider")
 
   @@map("users")
 }
@@ -154,6 +184,7 @@ model Workspace {
   knowledgeSources KnowledgeSource[]
   knowledgeJobs    KnowledgeJob[]
   knowledgeQueries KnowledgeQuery[]
+  toolApprovals    ToolApproval[]
 
   @@map("workspaces")
 }
@@ -210,6 +241,9 @@ model AgentRun {
   status             RunStatus          @default(PENDING)
   state              Json               @default("{}")
   result             Json?
+  maxTurns           Int                @default(4) @map("max_turns")
+  maxToolCalls       Int                @default(5) @map("max_tool_calls")
+  deadlineAt         DateTime           @map("deadline_at")
   activeWorkspaceId  String?            @unique @map("active_workspace_id") @db.Uuid
   leaseId            String?            @map("lease_id") @db.Uuid
   heartbeatAt        DateTime?          @map("heartbeat_at")
@@ -225,6 +259,7 @@ model AgentRun {
   modelInvocations   ModelInvocation[]
   evidence           Evidence[]
   auditEvents        AuditEvent[]
+  approvals          ToolApproval[]
 
   @@index([workspaceId, createdAt])
   @@index([status, leaseExpiresAt])
@@ -267,34 +302,60 @@ model RunMessage {
 }
 
 model RunToolCall {
-  id              String    @id @default(uuid()) @db.Uuid
-  runId           String    @map("run_id") @db.Uuid
-  modelToolCallId String    @map("model_tool_call_id")
-  toolName        String    @map("tool_name")
+  id              String            @id @default(uuid()) @db.Uuid
+  runId           String            @map("run_id") @db.Uuid
+  modelToolCallId String            @map("model_tool_call_id")
+  toolName        String            @map("tool_name")
   input           Json
   output          Json?
-  status          String    @default("PENDING")
-  idempotencyKey  String    @map("idempotency_key")
-  startedAt       DateTime  @default(now()) @map("started_at")
-  completedAt     DateTime? @map("completed_at")
-  run             AgentRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  status          RunToolCallStatus @default(PENDING)
+  riskLevel       ToolRiskLevel     @default(LOW) @map("risk_level")
+  idempotencyKey  String            @map("idempotency_key")
+  startedAt       DateTime          @default(now()) @map("started_at")
+  completedAt     DateTime?         @map("completed_at")
+  run             AgentRun          @relation(fields: [runId], references: [id], onDelete: Cascade)
+  approval        ToolApproval?
 
   @@unique([runId, modelToolCallId])
   @@unique([runId, idempotencyKey])
   @@map("run_tool_calls")
 }
 
+model ToolApproval {
+  id           String         @id @default(uuid()) @db.Uuid
+  runId        String         @map("run_id") @db.Uuid
+  toolCallId   String         @unique @map("tool_call_id") @db.Uuid
+  workspaceId  String         @map("workspace_id") @db.Uuid
+  toolName     String         @map("tool_name")
+  toolInput    Json           @map("tool_input")
+  riskLevel    ToolRiskLevel  @map("risk_level")
+  status       ApprovalStatus @default(PENDING)
+  requestedAt  DateTime       @default(now()) @map("requested_at")
+  decidedBy    String?        @map("decided_by") @db.Uuid
+  decisionNote String?        @map("decision_note")
+  decidedAt    DateTime?      @map("decided_at")
+  run          AgentRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  toolCall     RunToolCall    @relation(fields: [toolCallId], references: [id], onDelete: Cascade)
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  decider      User?          @relation("ApprovalDecider", fields: [decidedBy], references: [id])
+
+  @@index([workspaceId, status, requestedAt])
+  @@index([runId, status])
+  @@map("tool_approvals")
+}
+
 model Evidence {
-  id         String    @id @default(uuid()) @db.Uuid
-  runId      String    @map("run_id") @db.Uuid
-  artifactId String?   @map("artifact_id") @db.Uuid
-  sourceRef  String    @map("source_ref")
+  id         String       @id @default(uuid()) @db.Uuid
+  runId      String       @map("run_id") @db.Uuid
+  artifactId String?      @map("artifact_id") @db.Uuid
+  sourceRef  String       @map("source_ref")
+  kind       EvidenceKind @default(SOURCE)
   title      String
   summary    String
-  facts      Json      @default("[]")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  run        AgentRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
-  artifact   Artifact? @relation(fields: [artifactId], references: [id])
+  facts      Json         @default("[]")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  run        AgentRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  artifact   Artifact?    @relation(fields: [artifactId], references: [id])
 
   @@map("evidence")
 }

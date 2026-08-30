@@ -10,9 +10,21 @@ Knowledge jobs use the same outbox delivery guarantees but an isolated exchange,
 - The outbox dispatcher publishes unpublished events through a RabbitMQ confirm channel.
 - The worker consumes persistent messages with manual acknowledgements and bounded prefetch.
 - The worker claims runs through an atomic PostgreSQL status transition before executing tools.
+- Each run snapshots its maximum turns, maximum tool calls, and absolute execution deadline when accepted.
+- The worker advances a persisted `SOURCE`/`ANALYZE`/`ACTION`/`FINALIZE` cursor and emits concise progress events, never hidden reasoning or chain-of-thought.
 - Active claims carry a lease ID, heartbeat timestamp, and expiry timestamp.
 - The worker's periodic dispatcher republishes pending outbox events after worker or broker recovery.
 - Startup and periodic recovery atomically return expired `RUNNING` claims to `PENDING` and create a fresh recovery outbox event.
+
+## Tool approvals
+
+Tools are registered with strict input schemas and risk metadata. `artifact.read` is low risk, `deliverable.createApprovalNote` is medium risk, and `sandbox.execute` is high risk. Current policy requires reviewer approval for every high-risk tool call.
+
+Before sandbox execution, the worker atomically creates a `WAITING_APPROVAL` tool call and approval row containing the exact validated `{ language, code }` input, then changes the run to `WAITING_APPROVAL` and releases its lease. A database trigger makes the approval's run, workspace, tool, risk, and input immutable.
+
+Reviewers decide with `POST /api/agent-approvals/:approvalId/decision` and body `{ "decision": "APPROVED" | "REJECTED", "note"?: "..." }`. Authorization is resolved from the current `workspace_members` row inside the service; only workspace `REVIEWER` and `ADMIN` memberships qualify, regardless of the JWT role claim. The decision uses a pending-status compare-and-set, transitions the waiting run to `PENDING`, and writes `agent.run.resumed` to the outbox in the same transaction. On resume, an approval executes the immutable input once; a rejection is returned to the runtime as a denied tool result.
+
+Run reads include approval records. Source-backed evidence is stored as `SOURCE`, while model-produced content is stored as `MODEL_OUTPUT` and returned under separate result ID lists.
 
 ## Topology
 
@@ -53,7 +65,7 @@ Knowledge producers persist the `knowledge.job.requested` outbox topic with the 
 
 ## Cancellation
 
-Cancellation first performs the `CANCELLED` database transition and creates its outbox event in one transaction. Repeated cancellation returns the existing cancelled run without creating another event. The outbox dispatcher broadcasts the command to every live worker; the worker that owns the active delivery aborts its per-run controller, which propagates through model and sandbox HTTP requests. Heartbeat lease loss provides a fallback abort when a control message is missed, and terminal compare-and-set updates prevent cancelled runs from becoming completed or failed afterward.
+Cancellation first performs the `CANCELLED` database transition and creates its outbox event in one transaction. Pending, running, and `WAITING_APPROVAL` runs can be cancelled; pending approvals and unfinished tool calls are cancelled in the same transaction. Repeated cancellation returns the existing cancelled run without creating another event. The outbox dispatcher broadcasts the command to every live worker; the worker that owns the active delivery aborts its per-run controller, which propagates through model and sandbox HTTP requests. Heartbeat lease loss provides a fallback abort when a control message is missed, and terminal compare-and-set updates prevent cancelled runs from becoming completed or failed afterward.
 
 Control queues are exclusive and worker-local, so a cancellation broadcast sent while no worker is connected is not retained by RabbitMQ. PostgreSQL remains authoritative: a later delivery cannot claim a cancelled run.
 

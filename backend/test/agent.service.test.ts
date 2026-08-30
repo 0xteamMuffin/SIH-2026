@@ -1,7 +1,7 @@
-import { DataClassification, RunStatus } from "@prisma/client";
+import { ApprovalStatus, DataClassification, RunStatus, RunToolCallStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock, getArtifactBoundedMock, invokeModelMock, outboxEventMock, runMessageMock, runToolCallMock, transactionMock } = vi.hoisted(() => ({
+const { artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock, getArtifactBoundedMock, invokeModelMock, outboxEventMock, runMessageMock, runToolCallMock, toolApprovalMock, transactionMock } = vi.hoisted(() => ({
   artifactMock: { create: vi.fn(), find: vi.fn() },
   auditMock: vi.fn(),
   agentRunMock: {
@@ -11,17 +11,18 @@ const { artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock
     findUniqueOrThrow: vi.fn(),
     updateMany: vi.fn(),
   },
-  evidenceMock: { create: vi.fn() },
+  evidenceMock: { create: vi.fn(), findFirst: vi.fn() },
   extractArtifactMock: vi.fn(),
   getArtifactBoundedMock: vi.fn(),
   invokeModelMock: vi.fn(),
   outboxEventMock: { create: vi.fn() },
   runMessageMock: { create: vi.fn() },
-  runToolCallMock: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+  runToolCallMock: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), count: vi.fn() },
+  toolApprovalMock: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
   transactionMock: vi.fn(),
 }));
 
-vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock, evidence: evidenceMock, outboxEvent: outboxEventMock, runMessage: runMessageMock, runToolCall: runToolCallMock, $transaction: transactionMock } }));
+vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock, evidence: evidenceMock, outboxEvent: outboxEventMock, runMessage: runMessageMock, runToolCall: runToolCallMock, toolApproval: toolApprovalMock, $transaction: transactionMock } }));
 vi.mock("../src/lib/audit.js", () => ({ audit: auditMock }));
 vi.mock("../src/infrastructure/models/model-orchestrator.js", () => ({ invokeModelWithFallbacks: invokeModelMock }));
 vi.mock("../src/modules/artifacts/artifacts.service.js", () => ({ createArtifact: artifactMock.create, findArtifact: artifactMock.find, getArtifactBounded: getArtifactBoundedMock }));
@@ -34,7 +35,9 @@ describe("agent run access", () => {
     vi.clearAllMocks();
     transactionMock.mockImplementation((input) => Array.isArray(input)
       ? Promise.all(input)
-      : input({ agentRun: agentRunMock, outboxEvent: outboxEventMock }));
+      : input({ agentRun: agentRunMock, outboxEvent: outboxEventMock, runToolCall: runToolCallMock, toolApproval: toolApprovalMock }));
+    runToolCallMock.count.mockResolvedValue(0);
+    evidenceMock.findFirst.mockResolvedValue(null);
   });
 
   it("creates a run and queue outbox event atomically", async () => {
@@ -121,11 +124,11 @@ describe("agent run access", () => {
       modelProfile: "local-vision",
       modelReason: "persisted route",
       dataClassification: DataClassification.INTERNAL,
-      sourceArtifactId: "artifact-1",
+      sourceArtifactId: "10000000-0000-4000-8000-000000000001",
       status: RunStatus.PENDING,
     };
     const source = {
-      id: "artifact-1",
+      id: "10000000-0000-4000-8000-000000000001",
       workspaceId: "workspace-1",
       filename: "drawing.png",
       mimeType: "image/png",
@@ -157,7 +160,7 @@ describe("agent run access", () => {
     runToolCallMock.update.mockResolvedValue({});
     runMessageMock.create.mockResolvedValue({});
     evidenceMock.create.mockResolvedValue({ id: "evidence-1" });
-    artifactMock.create.mockResolvedValue({ id: "deliverable-1", sizeBytes: 1 });
+    artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000001", sizeBytes: 1 });
     invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Valve V-101 appears open.", provider: "local-runtime", modelId: "qwen3.5:4b", latencyMs: 10 } });
 
     await processRun("run-vision");
@@ -185,10 +188,10 @@ describe("agent run access", () => {
       modelProfile: "local-vision",
       modelReason: "persisted route",
       dataClassification: DataClassification.CONFIDENTIAL,
-      sourceArtifactId: "artifact-pdf",
+      sourceArtifactId: "10000000-0000-4000-8000-000000000002",
       status: RunStatus.PENDING,
     };
-    const source = { id: "artifact-pdf", workspaceId: "workspace-1", filename: "drawing.pdf", mimeType: "application/pdf", detectedMimeType: "application/pdf", objectKey: "workspace-1/drawing.pdf", sizeBytes: 100n };
+    const source = { id: "10000000-0000-4000-8000-000000000002", workspaceId: "workspace-1", filename: "drawing.pdf", mimeType: "application/pdf", detectedMimeType: "application/pdf", objectKey: "workspace-1/drawing.pdf", sizeBytes: 100n };
     const selectedProfile = { id: "local-vision", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["vision"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
     agentRunMock.findUnique.mockResolvedValue(run);
     agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
@@ -200,7 +203,7 @@ describe("agent run access", () => {
     runToolCallMock.update.mockResolvedValue({});
     runMessageMock.create.mockResolvedValue({});
     evidenceMock.create.mockResolvedValue({ id: "evidence-1" });
-    artifactMock.create.mockResolvedValue({ id: "deliverable-1", sizeBytes: 1 });
+    artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000002", sizeBytes: 1 });
     invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Text-only finding.", provider: "local-runtime", modelId: "qwen3.5:4b", latencyMs: 10 } });
 
     await processRun("run-pdf");
@@ -255,7 +258,7 @@ describe("agent run access", () => {
 
     await expect(cancelRun("run-1", { id: "user-1", role: "OPERATOR" })).resolves.toEqual(cancelled);
     expect(agentRunMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "run-1", status: { in: [RunStatus.PENDING, RunStatus.RUNNING] } },
+      where: { id: "run-1", status: { in: [RunStatus.PENDING, RunStatus.RUNNING, RunStatus.WAITING_APPROVAL] } },
     }));
     expect(outboxEventMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ topic: "agent.run.cancelled", aggregateId: "run-1" }) });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ actorId: "user-1", eventType: "AGENT_RUN_CANCELLED" }));
@@ -270,6 +273,18 @@ describe("agent run access", () => {
     expect(transactionMock).not.toHaveBeenCalled();
     expect(outboxEventMock.create).not.toHaveBeenCalled();
     expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels runs that are waiting for approval", async () => {
+    const waiting = { id: "run-1", workspaceId: "workspace-1", status: RunStatus.WAITING_APPROVAL };
+    agentRunMock.findFirst.mockResolvedValue(waiting);
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...waiting, status: RunStatus.CANCELLED });
+
+    await cancelRun("run-1", { id: "user-1", role: "OPERATOR" });
+
+    expect(toolApprovalMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: ApprovalStatus.PENDING }) }));
+    expect(runToolCallMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: RunToolCallStatus.CANCELLED }) }));
   });
 
   it("rejects cancellation after another transition wins", async () => {
@@ -290,5 +305,61 @@ describe("agent run access", () => {
 
     expect(work).not.toHaveBeenCalled();
     expect(runToolCallMock.update).not.toHaveBeenCalled();
+  });
+
+  it("pauses before executing a new high-risk sandbox call", async () => {
+    runToolCallMock.findUnique.mockResolvedValue(null);
+    runToolCallMock.create.mockResolvedValue({ id: "tool-call-1" });
+    toolApprovalMock.create.mockResolvedValue({ id: "approval-1" });
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    const work = vi.fn();
+
+    await expect(executeRunTool(
+      "run-1",
+      "sandbox.execute",
+      { language: "javascript", code: "console.log('safe')" },
+      work,
+      undefined,
+      { workspaceId: "workspace-1", leaseId: "lease-1", maxToolCalls: 5 },
+    )).rejects.toThrow("waiting for tool approval");
+
+    expect(work).not.toHaveBeenCalled();
+    expect(toolApprovalMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      toolName: "sandbox.execute",
+      toolInput: { language: "javascript", code: "console.log('safe')" },
+    }) });
+  });
+
+  it("executes an approved waiting tool and returns a rejected tool as an observation", async () => {
+    const waitingCall = { id: "tool-call-1", modelToolCallId: "model-call-1", status: RunToolCallStatus.WAITING_APPROVAL };
+    runToolCallMock.findUnique.mockResolvedValue(waitingCall);
+    runToolCallMock.updateMany.mockResolvedValue({ count: 1 });
+    runToolCallMock.update.mockResolvedValue({});
+    toolApprovalMock.findUnique.mockResolvedValue({ id: "approval-1", status: ApprovalStatus.APPROVED });
+    const approvedWork = vi.fn().mockResolvedValue({ ok: true, summary: "executed", stdout: "2", stderr: "", exitCode: 0 });
+
+    await expect(executeRunTool("run-1", "sandbox.execute", { language: "javascript", code: "1 + 1" }, approvedWork)).resolves.toMatchObject({ ok: true });
+    expect(approvedWork).toHaveBeenCalledOnce();
+
+    vi.clearAllMocks();
+    runToolCallMock.findUnique.mockResolvedValue(waitingCall);
+    runToolCallMock.updateMany.mockResolvedValue({ count: 1 });
+    toolApprovalMock.findUnique.mockResolvedValue({ id: "approval-1", status: ApprovalStatus.REJECTED });
+    const rejectedWork = vi.fn();
+
+    await expect(executeRunTool("run-1", "sandbox.execute", { language: "javascript", code: "1 + 1" }, rejectedWork)).resolves.toMatchObject({ ok: false, errorCode: "TOOL_APPROVAL_REJECTED" });
+    expect(rejectedWork).not.toHaveBeenCalled();
+  });
+
+  it("enforces the snapshotted tool-call limit before creating another call", async () => {
+    runToolCallMock.findUnique.mockResolvedValue(null);
+    runToolCallMock.count.mockResolvedValue(5);
+
+    await expect(executeRunTool("run-1", "artifact.read", {
+      artifactId: "10000000-0000-4000-8000-000000000001",
+      extractionVersion: "canonical-v1",
+    }, vi.fn(), undefined, { workspaceId: "workspace-1", leaseId: "lease-1", maxToolCalls: 5 })).rejects.toMatchObject({ code: "RUN_TOOL_CALL_LIMIT_EXCEEDED" });
+
+    expect(runToolCallMock.create).not.toHaveBeenCalled();
   });
 });
