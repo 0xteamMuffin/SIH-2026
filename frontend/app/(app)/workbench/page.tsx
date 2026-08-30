@@ -10,6 +10,8 @@ import {
   api, type Workspace, type Run, type Artifact,
 } from "../../../lib/api";
 import { nodeTypes, buildGraph, TraceStep } from "../../../components/workbench/CanvasNodes";
+import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer";
+
 
 const TERMINAL = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
 
@@ -37,6 +39,7 @@ export default function WorkbenchPage() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedNodeData, setSelectedNodeData] = useState<any>(null);
   const [rfInstance, setRfInstance] = useState<any>(null);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
 
 
   // Load Initial Workspaces
@@ -177,12 +180,22 @@ export default function WorkbenchPage() {
         <div style={{ padding: "20px", display: "flex", justifyContent: "center", borderTop: "1px solid var(--line)", background: "rgba(12,12,14,0.95)", zIndex: 10 }}>
           <form onSubmit={handleSubmit} style={{ width: "100%", maxWidth: 800, background: "var(--field)", border: "1px solid var(--line)", borderRadius: 12, padding: "8px 12px", display: "flex", alignItems: "center", gap: 12, transition: "border-color 200ms" }} onFocus={e => e.currentTarget.style.borderColor = "rgba(249,115,22,0.5)"} onBlur={e => e.currentTarget.style.borderColor = "var(--line)"}>
             
-            <label style={{ cursor: "pointer", color: file ? "var(--accent)" : "var(--ink-3)", display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: 8, background: file ? "rgba(249,115,22,0.1)" : "transparent", transition: "all 150ms" }} title={file ? file.name : "Attach a file"}>
+            <label style={{ cursor: "pointer", color: file ? "var(--accent)" : "var(--ink-3)", display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: 8, background: file ? "rgba(249,115,22,0.1)" : "transparent", transition: "all 150ms", flexShrink: 0 }} title="Attach a file">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.4 11-9.2 9.2a6 6 0 0 1-8.5-8.5l8.6-8.6A4 4 0 0 1 18 9l-8.6 8.6a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
               <input type="file" style={{ display: "none" }} onChange={e => setFile(e.target.files?.[0] ?? null)} />
             </label>
 
-            <input value={task} onChange={e => setTask(e.target.value)} placeholder="Ask the agent to do something..." style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--ink)", fontSize: 14 }} />
+            {file && (
+              <div 
+                style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--canvas)", border: "1px solid var(--line)", padding: "4px 8px", borderRadius: 6, cursor: "pointer" }}
+                onClick={() => setShowPreviewModal(true)}
+              >
+                <span style={{ fontSize: 12, color: "var(--ink-2)", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+                <button type="button" onClick={(e) => { e.stopPropagation(); setFile(null); }} style={{ background: "none", border: "none", color: "var(--ink-3)", cursor: "pointer", display: "flex", alignItems: "center", padding: 2 }}>✕</button>
+              </div>
+            )}
+
+            <input value={task} onChange={e => setTask(e.target.value)} placeholder="Ask the agent to do something..." style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--ink)", fontSize: 14, minWidth: 0 }} />
             
             <div style={{ display: "flex", gap: 8 }}>
               {isRunActive && <button type="button" onClick={() => run && api.cancelRun(run.id).then(r => setRun(r.run))} className="btn-danger" style={{ padding: "6px 12px", fontSize: 12 }}>Stop</button>}
@@ -250,6 +263,26 @@ export default function WorkbenchPage() {
           )}
         </div>
       </div>
+      )}
+
+      {/* File Preview Modal */}
+      {showPreviewModal && file && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowPreviewModal(false)}>
+          <div style={{ background: "var(--canvas)", border: "1px solid var(--line)", borderRadius: 12, width: "90%", maxWidth: 1000, height: "80vh", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>{file.name}</span>
+              <button onClick={() => setShowPreviewModal(false)} className="btn-ghost" style={{ padding: "4px 8px" }}>Close</button>
+            </div>
+            <div style={{ flex: 1, overflow: "hidden", background: "#fff" }}>
+              <DocViewer 
+                documents={[{ uri: URL.createObjectURL(file), fileType: file.name.split('.').pop() }]} 
+                pluginRenderers={DocViewerRenderers} 
+                config={{ header: { disableHeader: true } }}
+                style={{ width: "100%", height: "100%" }} 
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

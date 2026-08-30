@@ -81,6 +81,15 @@ export const api = {
     a.click();
     URL.revokeObjectURL(url);
   },
+
+  getArtifactBlobUrl: async (artifactId: string) => {
+    const token = getToken();
+    const res = await fetch(`${BASE}/api/artifacts/${artifactId}/download`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error("Download failed");
+    return URL.createObjectURL(await res.blob());
+  },
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
