@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
 import { requireWorkspaceAccess } from "../../middleware/workspace-access.js";
+import { AppError } from "../../lib/errors.js";
 import { createRun, getRun, cancelRun } from "./agent.service.js";
 
 export const agentRouter = Router();
@@ -12,8 +13,12 @@ agentRouter.post("/workspaces/:workspaceId/runs", authenticate, requireWorkspace
   } catch (error) { next(error); }
 });
 agentRouter.get("/runs/:runId", authenticate, async (request, response, next) => {
-  try { response.json(await getRun(String(request.params.runId)) ?? { error: { code: "NOT_FOUND", message: "Run not found" } }); } catch (error) { next(error); }
+  try {
+    const run = await getRun(String(request.params.runId), request.user!);
+    if (!run) throw new AppError(404, "Run not found", "NOT_FOUND");
+    response.json({ run });
+  } catch (error) { next(error); }
 });
 agentRouter.post("/runs/:runId/cancel", authenticate, async (request, response, next) => {
-  try { response.json({ run: await cancelRun(String(request.params.runId), request.user!.id) }); } catch (error) { next(error); }
+  try { response.json({ run: await cancelRun(String(request.params.runId), request.user!) }); } catch (error) { next(error); }
 });

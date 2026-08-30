@@ -9,6 +9,7 @@ import { runCode } from "../../infrastructure/sandbox/sandbox-client.js";
 import { createArtifact, findArtifact, getArtifact } from "../artifacts/artifacts.service.js";
 import { approvalNoteDocx } from "./approval-note.js";
 import type { EvidenceItem, ToolResult } from "./agent.types.js";
+import type { AuthUser } from "../../middleware/auth.js";
 
 const MAX_TURNS = 4;
 const MAX_TOOL_CALLS = 5;
@@ -33,6 +34,11 @@ async function saveEvidence(runId: string, artifactId: string | undefined, sourc
   const item = await prisma.evidence.create({ data: { runId, artifactId, sourceRef, title, summary, facts: toJson(facts) } });
   return { id: item.id, sourceRef, title, summary, facts };
 }
+function accessibleRunWhere(runId: string, actor: Pick<AuthUser, "id" | "role">): Prisma.AgentRunWhereInput {
+  return actor.role === "ADMIN"
+    ? { id: runId }
+    : { id: runId, workspace: { members: { some: { userId: actor.id } } } };
+}
 export async function createRun(input: { workspaceId: string; userId: string; task: string; artifactId?: string }) {
   const decision = selectModel(input.task, Boolean(input.artifactId));
   const run = await prisma.agentRun.create({ data: { workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, activeWorkspaceId: input.workspaceId } });
@@ -41,7 +47,9 @@ export async function createRun(input: { workspaceId: string; userId: string; ta
   return run;
 }
 async function processRun(runId: string, decision: RoutingDecision, sourceArtifactId?: string) {
-  const run = await prisma.agentRun.update({ where: { id: runId }, data: { status: RunStatus.RUNNING, startedAt: new Date() } });
+  const claimed = await prisma.agentRun.updateMany({ where: { id: runId, status: RunStatus.PENDING }, data: { status: RunStatus.RUNNING, startedAt: new Date() } });
+  if (claimed.count === 0) return;
+  const run = await prisma.agentRun.findUniqueOrThrow({ where: { id: runId } });
   let turn = 1;
   try {
     await appendMessage(run.id, turn, "system", { event: "RUN_STARTED", model: decision.profile.id, capability: decision.capability, maxTurns: MAX_TURNS, maxToolCalls: MAX_TOOL_CALLS });
@@ -64,19 +72,24 @@ async function processRun(runId: string, decision: RoutingDecision, sourceArtifa
     if (decision.capability === "code") result.sandbox = await executeTool(run.id, "sandbox.execute", { language: "javascript" }, async () => ({ ...(await runCode(sourceArtifactId ? sourceText : "console.log('Sandbox verification complete')")), ok: true, summary: "Sandbox execution completed" }));
     else if (sourceArtifactId) await executeTool(run.id, "deliverable.createApprovalNote", { format: "docx" }, async () => { const artifact = await createArtifact({ workspaceId: run.workspaceId, userId: run.requestedBy, filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", kind: "GENERATED_DOCX", bytes: Buffer.from(await approvalNoteDocx(run.task, evidence)) }); result.artifact = artifact; return { ok: true, summary: "Generated approval-note DOCX", data: { artifactId: artifact.id } }; });
     await appendMessage(run.id, ++turn, "assistant", result);
-    await prisma.agentRun.update({ where: { id: run.id }, data: { status: RunStatus.COMPLETED, result: toJson(result), activeWorkspaceId: null, completedAt: new Date() } });
-    await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId: run.id, eventType: "AGENT_RUN_COMPLETED", metadata: { sovereign: decision.profile.sovereign } });
+    const completed = await prisma.agentRun.updateMany({ where: { id: run.id, status: RunStatus.RUNNING }, data: { status: RunStatus.COMPLETED, result: toJson(result), activeWorkspaceId: null, completedAt: new Date() } });
+    if (completed.count > 0) await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId: run.id, eventType: "AGENT_RUN_COMPLETED", metadata: { sovereign: decision.profile.sovereign } });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unknown run failure";
-    await prisma.agentRun.update({ where: { id: runId }, data: { status: RunStatus.FAILED, result: toJson({ error: reason }), activeWorkspaceId: null, completedAt: new Date() } });
-    await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId, eventType: "AGENT_RUN_FAILED", metadata: { reason } });
+    const failed = await prisma.agentRun.updateMany({ where: { id: runId, status: RunStatus.RUNNING }, data: { status: RunStatus.FAILED, result: toJson({ error: reason }), activeWorkspaceId: null, completedAt: new Date() } });
+    if (failed.count > 0) await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId, eventType: "AGENT_RUN_FAILED", metadata: { reason } });
   }
 }
-export async function getRun(runId: string) {
-  return prisma.agentRun.findUnique({ where: { id: runId }, include: { messages: { orderBy: { createdAt: "asc" } }, toolCalls: { orderBy: { startedAt: "asc" } }, evidence: { orderBy: { createdAt: "asc" } } } });
+export async function getRun(runId: string, actor: Pick<AuthUser, "id" | "role">) {
+  return prisma.agentRun.findFirst({ where: accessibleRunWhere(runId, actor), include: { messages: { orderBy: { createdAt: "asc" } }, toolCalls: { orderBy: { startedAt: "asc" } }, evidence: { orderBy: { createdAt: "asc" } } } });
 }
-export async function cancelRun(runId: string, userId: string) {
-  const run = await prisma.agentRun.findUnique({ where: { id: runId } }); if (!run || (run.status !== RunStatus.PENDING && run.status !== RunStatus.RUNNING)) throw new AppError(409, "Run is not active", "RUN_NOT_ACTIVE");
-  const updated = await prisma.agentRun.update({ where: { id: runId }, data: { status: RunStatus.CANCELLED, activeWorkspaceId: null, completedAt: new Date() } });
-  await audit({ actorId: userId, workspaceId: updated.workspaceId, runId, eventType: "AGENT_RUN_CANCELLED" }); return updated;
+export async function cancelRun(runId: string, actor: Pick<AuthUser, "id" | "role">) {
+  const run = await prisma.agentRun.findFirst({ where: accessibleRunWhere(runId, actor) });
+  if (!run) throw new AppError(404, "Run not found", "NOT_FOUND");
+  if (run.status !== RunStatus.PENDING && run.status !== RunStatus.RUNNING) throw new AppError(409, "Run is not active", "RUN_NOT_ACTIVE");
+  const cancelled = await prisma.agentRun.updateMany({ where: { id: runId, status: { in: [RunStatus.PENDING, RunStatus.RUNNING] } }, data: { status: RunStatus.CANCELLED, activeWorkspaceId: null, completedAt: new Date() } });
+  if (cancelled.count === 0) throw new AppError(409, "Run is not active", "RUN_NOT_ACTIVE");
+  const updated = await prisma.agentRun.findUniqueOrThrow({ where: { id: runId } });
+  await audit({ actorId: actor.id, workspaceId: updated.workspaceId, runId, eventType: "AGENT_RUN_CANCELLED" });
+  return updated;
 }
