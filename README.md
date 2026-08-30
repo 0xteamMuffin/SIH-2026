@@ -4,6 +4,8 @@ An on-premise agentic AI workbench for confidential industrial knowledge work.
 
 Read [the end-to-end guide](./docs/END_TO_END.md) for architecture, data flow, and sovereign-mode details.
 
+Backend delivery is tracked in [the backend roadmap](./docs/BACKEND_ROADMAP.md). Deferred UI integration is tracked separately in [the frontend backlog](./docs/FRONTEND_BACKLOG.md).
+
 
 ## Quick start
 
