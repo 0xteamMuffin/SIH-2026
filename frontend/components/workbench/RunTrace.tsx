@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { Run, Artifact } from "../../lib/api";
 import LoadingState from "../ui/LoadingState";
 import AgentTrace from "../ui/AgentTrace";
@@ -34,10 +35,19 @@ export default function RunTrace({ run }: Props) {
             </p>
           )}
         </div>
-        {isRunning && (
+        {isRunning ? (
           <div style={{ flexShrink: 0, marginTop: 4 }}>
             <LoadingState label="Agent running" variant="Dots" />
           </div>
+        ) : (
+          <Link href={`/runs/${run.id}/canvas`} className="btn-ghost" style={{ flexShrink: 0, marginTop: 4, display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <line x1="3" y1="9" x2="21" y2="9" />
+              <line x1="9" y1="21" x2="9" y2="9" />
+            </svg>
+            View Canvas
+          </Link>
         )}
       </div>
 

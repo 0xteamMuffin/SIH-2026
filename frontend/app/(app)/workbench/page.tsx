@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, type FormEvent } from "react";
+import Link from "next/link";
 import { api, type Workspace, type Run, type Artifact } from "../../../lib/api";
 import WorkspacePanel from "../../../components/workbench/WorkspacePanel";
 import TaskForm from "../../../components/workbench/TaskForm";
@@ -129,6 +130,14 @@ export default function WorkbenchPage() {
       />
 
       <div className="task-panel">
+        {selectedWs && (
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
+             <Link href={`/workspaces/${selectedWs}/canvas`} className="btn-ghost" style={{ display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                Global Workspace Canvas
+              </Link>
+          </div>
+        )}
         <TaskForm
           task={task}
           file={file}
