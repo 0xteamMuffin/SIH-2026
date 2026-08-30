@@ -19,7 +19,7 @@ export default function LoginPage() {
     setError("");
     try {
       const data = await api.login(email, password);
-      login(data.token);
+      login(data.token, data.refreshToken);
       router.push("/workbench");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");

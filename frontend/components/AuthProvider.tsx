@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 interface AuthContextType {
   token: string | null;
   loading: boolean;
-  login: (token: string) => void;
+  login: (token: string, refreshToken: string) => void;
   logout: () => void;
 }
 
@@ -24,13 +24,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(false);
   }, []);
 
-  function login(t: string) {
+  function login(t: string, refreshToken: string) {
     localStorage.setItem("token", t);
+    localStorage.setItem("refreshToken", refreshToken);
     setToken(t);
   }
 
   function logout() {
     localStorage.removeItem("token");
+    localStorage.removeItem("refreshToken");
     setToken(null);
   }
 
