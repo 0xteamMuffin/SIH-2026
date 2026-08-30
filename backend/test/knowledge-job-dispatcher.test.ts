@@ -17,8 +17,11 @@ function dependencies(type: KnowledgeJobType, status = KnowledgeJobStatus.QUEUED
     },
     processIndexSourceJob: vi.fn().mockResolvedValue(undefined),
     processKnowledgeQueryJob: vi.fn().mockResolvedValue(undefined),
+    processRemoveSourceJob: vi.fn().mockResolvedValue(undefined),
+    processRebuildIndexJob: vi.fn().mockResolvedValue(undefined),
     failKnowledgeJob: vi.fn().mockResolvedValue(undefined),
     failKnowledgeQueryJob: vi.fn().mockResolvedValue(undefined),
+    failRemoveSourceJob: vi.fn().mockResolvedValue(undefined),
   } as unknown as KnowledgeJobDispatcherDependencies;
 }
 
@@ -26,6 +29,8 @@ describe("knowledge job dispatcher", () => {
   it.each([
     [KnowledgeJobType.INDEX_SOURCE, "processIndexSourceJob"],
     [KnowledgeJobType.EXECUTE_QUERY, "processKnowledgeQueryJob"],
+    [KnowledgeJobType.REMOVE_SOURCE, "processRemoveSourceJob"],
+    [KnowledgeJobType.REBUILD_INDEX, "processRebuildIndexJob"],
   ] as const)("dispatches %s to its processor", async (type, processor) => {
     const input = dependencies(type);
 
@@ -37,6 +42,7 @@ describe("knowledge job dispatcher", () => {
   it.each([
     [KnowledgeJobType.INDEX_SOURCE, "failKnowledgeJob"],
     [KnowledgeJobType.EXECUTE_QUERY, "failKnowledgeQueryJob"],
+    [KnowledgeJobType.REMOVE_SOURCE, "failRemoveSourceJob"],
   ] as const)("routes exhausted %s failures to the matching terminal handler", async (type, handler) => {
     const input = dependencies(type);
     const error = new Error("retries exhausted");
@@ -56,12 +62,13 @@ describe("knowledge job dispatcher", () => {
     expect(input.processKnowledgeQueryJob).not.toHaveBeenCalled();
   });
 
-  it("uses a permanent unsupported-type error after retries", async () => {
+  it("passes rebuild failures to the generic terminal handler", async () => {
     const input = dependencies(KnowledgeJobType.REBUILD_INDEX);
+    const error = new Error("transient failure");
 
-    await failExhaustedKnowledgeJob(jobId, new Error("transient failure"), input);
+    await failExhaustedKnowledgeJob(jobId, error, input);
 
-    expect(input.failKnowledgeJob).toHaveBeenCalledWith(jobId, expect.objectContaining({ code: "KNOWLEDGE_JOB_TYPE_UNSUPPORTED" }));
+    expect(input.failKnowledgeJob).toHaveBeenCalledWith(jobId, error);
   });
 
   it.each([KnowledgeJobStatus.SUCCEEDED, KnowledgeJobStatus.FAILED, KnowledgeJobStatus.CANCELLED])(

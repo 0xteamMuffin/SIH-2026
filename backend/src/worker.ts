@@ -12,6 +12,7 @@ import { failRun, processRun } from "./modules/agent/agent.service.js";
 import { failArtifactDeletionJob, processArtifactDeletionJob, reconcileArtifactDeletions, runArtifactDeletionReconciliation } from "./modules/artifacts/artifact-deletion.processor.js";
 import { ensureActiveKnowledgeIndex } from "./modules/knowledge/knowledge-index-provisioner.js";
 import { failExhaustedKnowledgeJob, processKnowledgeJob } from "./modules/knowledge/knowledge-job-dispatcher.js";
+import { reconcileKnowledgeLifecycle, runKnowledgeReconciliation } from "./modules/knowledge/knowledge-reconciliation.js";
 
 async function main() {
   await ensureActiveKnowledgeIndex();
@@ -21,6 +22,10 @@ async function main() {
   const consumer = await consumeAgentRuns(channel, processRun, failRun);
   const cancellationConsumer = await consumeAgentRunCancellations(channel, consumer.abort);
   const knowledgeConsumer = await startKnowledgeWorker(processKnowledgeJob, failExhaustedKnowledgeJob);
+  const knowledgeRecovery = await reconcileKnowledgeLifecycle();
+  if (knowledgeRecovery.recoveredJobs > 0 || knowledgeRecovery.repairedSourceIndexes > 0 || knowledgeRecovery.orphanSourcesRemoved > 0) {
+    logger.warn(knowledgeRecovery, "Reconciled knowledge lifecycle at startup");
+  }
   const artifactRecovery = await reconcileArtifactDeletions();
   if (artifactRecovery.recovered > 0 || artifactRecovery.repaired > 0) logger.warn(artifactRecovery, "Reconciled artifact deletions at startup");
   const artifactDeletionConsumer = await consumeArtifactDeletions(await artifactDeletionRabbitChannel(), processArtifactDeletionJob, failArtifactDeletionJob);
@@ -28,6 +33,7 @@ async function main() {
   const dispatcher = runOutboxDispatcher(dispatcherController.signal);
   const recovery = runStaleRunRecovery(dispatcherController.signal);
   const artifactReconciliation = runArtifactDeletionReconciliation(dispatcherController.signal);
+  const knowledgeReconciliation = runKnowledgeReconciliation(dispatcherController.signal);
   let shuttingDown = false;
 
   const shutdown = async (signal: string, exitCode = 0) => {
@@ -44,6 +50,7 @@ async function main() {
         dispatcher,
         recovery,
         artifactReconciliation,
+        knowledgeReconciliation,
       ]);
     })();
     let timeoutHandle: NodeJS.Timeout | undefined;

@@ -9,12 +9,14 @@ Knowledge jobs use the same outbox delivery guarantees but an isolated exchange,
 - The API creates an `AgentRun` and an outbox event in one PostgreSQL transaction.
 - The outbox dispatcher publishes unpublished events through a RabbitMQ confirm channel.
 - The worker consumes persistent messages with manual acknowledgements and bounded prefetch.
-- The worker claims runs through an atomic PostgreSQL status transition before executing tools.
-- Each run snapshots its maximum turns, maximum tool calls, and absolute execution deadline when accepted.
+- The API serializes admission with a PostgreSQL transaction-scoped advisory lock, then atomically enforces one queued/active run per workspace and `AGENT_MAX_CONCURRENT_RUNS_PER_USER` queued/active runs per requester.
+- The worker serializes claims with a separate advisory lock and admits at most `QUEUE_PREFETCH` database `RUNNING` runs globally, including across worker replicas. A capacity miss leaves the run pending and writes a delayed outbox request rather than consuming a retry.
+- Each run snapshots its maximum turns, maximum tool calls, input/output/total token budgets, and absolute execution deadline when accepted.
 - The worker advances a persisted `SOURCE`/`ANALYZE`/`ACTION`/`FINALIZE` cursor and emits concise progress events, never hidden reasoning or chain-of-thought.
 - Active claims carry a lease ID, heartbeat timestamp, and expiry timestamp.
 - The worker's periodic dispatcher republishes pending outbox events after worker or broker recovery.
 - Startup and periodic recovery atomically return expired `RUNNING` claims to `PENDING` and create a fresh recovery outbox event.
+- Knowledge reconciliation also repairs missing or stale source-index rows, validates ready rows against Qdrant point counts and revision payloads, resumes source removal, and deletes only orphan points whose source is absent or terminally inactive in PostgreSQL. Its interval is controlled by `KNOWLEDGE_RECONCILIATION_INTERVAL_MS`.
 
 ## Tool approvals
 
@@ -42,7 +44,13 @@ Run reads include approval records. Source-backed evidence is stored as `SOURCE`
 
 Agent queue names and worker concurrency are configurable. Knowledge transport uses the fixed `workbench.knowledge` names above. Message bodies contain identifiers only; source documents and prompts are loaded from authorized durable storage by the worker.
 
+`AGENT_MAX_INPUT_TOKENS`, `AGENT_MAX_OUTPUT_TOKENS`, and `AGENT_MAX_TOTAL_TOKENS` are cumulative per-run budgets across provider fallbacks and repair calls. Before every call, the worker sums persisted successful `ModelInvocation` usage and bounds the requested output by the remaining output and total budgets. A response may reach a budget exactly; exhausted budgets stop the next call, while an over-budget response is persisted and then terminally fails the run without queue retry. Providers that omit prompt or completion usage also fail the run closed. Approval pauses and resumes retain the budget snapshot in `AgentRun.state`.
+
 Knowledge producers persist the `knowledge.job.requested` outbox topic with the strict payload `{ "jobId": "<UUID>" }`. The dispatcher validates that payload and publishes it through confirms to `workbench.knowledge` using the `jobs` routing key. Knowledge retry count, delay, and prefetch are configured independently with `KNOWLEDGE_QUEUE_MAX_RETRIES`, `KNOWLEDGE_QUEUE_RETRY_DELAY_MS`, and `KNOWLEDGE_QUEUE_PREFETCH`.
+
+Knowledge-source deletion uses one durable `REMOVE_SOURCE` job per linked index collection. An active indexing lease is allowed to fence itself out before removal starts, preventing a late upsert from recreating points after deletion. A global administrator can explicitly enqueue `REBUILD_INDEX` for the current active index. Model-version migration is not automatic because safe cutover requires a fully backfilled replacement index before activation.
+
+No reranking model is configured in `backend/config/models.json`, so retrieval currently preserves vector similarity ordering. The model registry accepts the `reranking` capability for a future optional reranker, but no unconfigured inference call is made.
 
 ## Delivery rules
 

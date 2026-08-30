@@ -15,12 +15,13 @@ const { mocks, transactionMock } = vi.hoisted(() => {
   const mocks = {
     artifact: { findFirst: vi.fn() },
     knowledgeIndex: { findFirst: vi.fn() },
-    knowledgeSource: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-    knowledgeSourceIndex: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-    knowledgeJob: { create: vi.fn(), findFirst: vi.fn() },
+    knowledgeSource: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    knowledgeSourceIndex: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    knowledgeJob: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     knowledgeQuery: { create: vi.fn(), findFirst: vi.fn() },
     workspace: { findUnique: vi.fn() },
     outboxEvent: { create: vi.fn() },
+    auditEvent: { create: vi.fn() },
   };
   return { mocks, transactionMock: vi.fn() };
 });
@@ -32,10 +33,12 @@ vi.mock("../src/lib/prisma.js", () => ({
 import {
   createKnowledgeQuery,
   createKnowledgeSource,
+  deleteKnowledgeSource,
   getKnowledgeQuery,
   getKnowledgeSource,
   listKnowledgeSources,
   reindexKnowledgeSource,
+  requestKnowledgeIndexRebuild,
 } from "../src/modules/knowledge/knowledge.service.js";
 
 const workspaceId = "20000000-0000-4000-8000-000000000001";
@@ -117,7 +120,10 @@ describe("knowledge service", () => {
     const result = await listKnowledgeSources({ workspaceId, limit: 1 });
 
     expect(mocks.knowledgeSource.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ OR: [{ workspaceId }, { visibility: KnowledgeVisibility.ORGANIZATION_SHARED }] }),
+      where: expect.objectContaining({
+        OR: [{ workspaceId }, { visibility: KnowledgeVisibility.ORGANIZATION_SHARED }],
+        status: { in: [KnowledgeSourceStatus.ACTIVE, KnowledgeSourceStatus.ARCHIVED] },
+      }),
       take: 2,
     }));
     expect(result.knowledgeSources[0]).toMatchObject({ artifact: { sizeBytes: "9007199254740993" } });
@@ -132,11 +138,86 @@ describe("knowledge service", () => {
     await getKnowledgeQuery("60000000-0000-4000-8000-000000000001", actor);
 
     expect(mocks.knowledgeSource.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ id: sourceId, OR: expect.arrayContaining([{ visibility: KnowledgeVisibility.ORGANIZATION_SHARED }]) }),
+      where: expect.objectContaining({ id: sourceId, status: { in: [KnowledgeSourceStatus.ACTIVE, KnowledgeSourceStatus.ARCHIVED] }, OR: expect.arrayContaining([{ visibility: KnowledgeVisibility.ORGANIZATION_SHARED }]) }),
     }));
     expect(mocks.knowledgeQuery.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "60000000-0000-4000-8000-000000000001", workspace: { members: { some: { userId } } } },
     }));
+  });
+
+  it("hides a source immediately and creates a durable removal job", async () => {
+    const sourceIndexId = "70000000-0000-4000-8000-000000000001";
+    mocks.knowledgeSource.findFirst.mockResolvedValue({
+      id: sourceId,
+      workspaceId,
+      status: KnowledgeSourceStatus.ACTIVE,
+      artifact,
+      sourceIndexes: [{
+        id: sourceIndexId,
+        sourceId,
+        indexId,
+        status: KnowledgeSourceIndexStatus.READY,
+        leaseExpiresAt: null,
+        index,
+        jobs: [],
+      }],
+    });
+    mocks.knowledgeSource.update.mockResolvedValue({});
+    mocks.knowledgeSourceIndex.update.mockResolvedValue({});
+    mocks.knowledgeJob.updateMany.mockResolvedValue({ count: 0 });
+    mocks.knowledgeJob.create.mockImplementation(async ({ data }) => ({ ...data, status: KnowledgeJobStatus.QUEUED }));
+
+    const result = await deleteKnowledgeSource(sourceId, { id: userId, role: "ADMIN" }, new Date("2026-08-30T12:00:00.000Z"));
+
+    expect(result.knowledgeSource.status).toBe(KnowledgeSourceStatus.DELETING);
+    expect(mocks.knowledgeSource.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: KnowledgeSourceStatus.DELETING }) }));
+    expect(mocks.knowledgeSourceIndex.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: KnowledgeSourceIndexStatus.REMOVING }) }));
+    expect(mocks.knowledgeJob.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "REMOVE_SOURCE", sourceIndexId }) });
+    const removalJobId = mocks.knowledgeJob.create.mock.calls[0][0].data.id;
+    expect(mocks.outboxEvent.create).toHaveBeenCalledWith({ data: { topic: "knowledge.job.requested", aggregateId: removalJobId, payload: { jobId: removalJobId } } });
+  });
+
+  it("requires workspace ADMIN membership for source deletion", async () => {
+    mocks.knowledgeSource.findFirst.mockResolvedValue(null);
+
+    await expect(deleteKnowledgeSource(sourceId, actor)).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
+
+    expect(mocks.knowledgeSource.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: sourceId, workspace: { members: { some: { userId, role: "ADMIN" } } } },
+    }));
+    expect(mocks.knowledgeJob.create).not.toHaveBeenCalled();
+  });
+
+  it("reuses an in-progress removal job on repeated deletion", async () => {
+    const removalJob = {
+      id: "80000000-0000-4000-8000-000000000001",
+      status: KnowledgeJobStatus.QUEUED,
+      type: "REMOVE_SOURCE",
+    };
+    mocks.knowledgeSource.findFirst.mockResolvedValue({
+      id: sourceId,
+      workspaceId,
+      status: KnowledgeSourceStatus.DELETING,
+      artifact,
+      sourceIndexes: [{
+        id: "70000000-0000-4000-8000-000000000001",
+        sourceId,
+        indexId,
+        status: KnowledgeSourceIndexStatus.REMOVING,
+        leaseExpiresAt: null,
+        index,
+        jobs: [removalJob],
+      }],
+    });
+    mocks.knowledgeSourceIndex.update.mockResolvedValue({});
+    mocks.knowledgeJob.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await deleteKnowledgeSource(sourceId, { id: userId, role: "ADMIN" });
+
+    expect(result.jobs).toEqual([removalJob]);
+    expect(mocks.knowledgeJob.create).not.toHaveBeenCalled();
+    expect(mocks.auditEvent.create).not.toHaveBeenCalled();
+    expect(mocks.outboxEvent.create).toHaveBeenCalledWith({ data: { topic: "knowledge.job.requested", aggregateId: removalJob.id, payload: { jobId: removalJob.id } } });
   });
 
   it("reindexes a failed source link with a new revision and job", async () => {
@@ -185,5 +266,15 @@ describe("knowledge service", () => {
     const jobId = mocks.knowledgeJob.create.mock.calls[0][0].data.id;
     expect(mocks.outboxEvent.create).toHaveBeenCalledWith({ data: { topic: "knowledge.job.requested", aggregateId: jobId, payload: { jobId } } });
     expect(result.knowledgeQuery).toMatchObject({ queryText: "Where is valve V-101?", status: "QUEUED" });
+  });
+
+  it("allows only a global administrator to queue an active-index rebuild", async () => {
+    mocks.knowledgeJob.create.mockImplementation(async ({ data }) => ({ ...data, status: KnowledgeJobStatus.QUEUED }));
+
+    await expect(requestKnowledgeIndexRebuild(actor)).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+    const result = await requestKnowledgeIndexRebuild({ id: userId, role: "ADMIN" });
+
+    expect(result.index).toMatchObject({ id: indexId });
+    expect(mocks.knowledgeJob.create).toHaveBeenCalledWith({ data: expect.objectContaining({ indexId, type: "REBUILD_INDEX" }) });
   });
 });

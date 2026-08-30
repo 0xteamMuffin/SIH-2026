@@ -68,4 +68,19 @@ describe("OpenAPI contract", () => {
     expect(new Set(operationIds).size).toBe(operationIds.length);
     expect(operations.every((operation) => "security" in operation || openApiDocument.security.length > 0)).toBe(true);
   });
+
+  it("documents run admission errors and the persisted token-budget contract", () => {
+    const createRun = openApiDocument.paths["/api/workspaces/{workspaceId}/runs"].post;
+    const agentRun = openApiDocument.components.schemas.AgentRun;
+
+    expect(createRun.responses).toHaveProperty("409");
+    expect(createRun.responses).toHaveProperty("429");
+    expect(agentRun.properties.state).toMatchObject({
+      properties: {
+        tokenBudget: {
+          required: ["maxInputTokens", "maxOutputTokens", "maxTotalTokens"],
+        },
+      },
+    });
+  });
 });

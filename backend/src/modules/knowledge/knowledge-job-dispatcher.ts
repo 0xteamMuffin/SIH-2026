@@ -3,6 +3,8 @@ import { AppError } from "../../lib/errors.js";
 import { prisma } from "../../lib/prisma.js";
 import { failKnowledgeJob, processIndexSourceJob } from "./index-source-job.processor.js";
 import { failKnowledgeQueryJob, processKnowledgeQueryJob } from "./knowledge-query-processor.js";
+import { failRemoveSourceJob, processRemoveSourceJob } from "./remove-source-job.processor.js";
+import { processRebuildIndexJob } from "./rebuild-index-job.processor.js";
 
 type KnowledgeJobLookup = Pick<PrismaClient, "knowledgeJob">;
 type ProcessJob = (jobId: string) => Promise<void>;
@@ -12,16 +14,22 @@ export type KnowledgeJobDispatcherDependencies = {
   store: KnowledgeJobLookup;
   processIndexSourceJob: ProcessJob;
   processKnowledgeQueryJob: ProcessJob;
+  processRemoveSourceJob: ProcessJob;
+  processRebuildIndexJob: ProcessJob;
   failKnowledgeJob: FailJob;
   failKnowledgeQueryJob: FailJob;
+  failRemoveSourceJob: FailJob;
 };
 
 const defaults: KnowledgeJobDispatcherDependencies = {
   store: prisma,
   processIndexSourceJob,
   processKnowledgeQueryJob,
+  processRemoveSourceJob,
+  processRebuildIndexJob,
   failKnowledgeJob,
   failKnowledgeQueryJob,
+  failRemoveSourceJob,
 };
 
 async function activeJobType(jobId: string, store: KnowledgeJobLookup): Promise<KnowledgeJobType | undefined> {
@@ -46,6 +54,8 @@ export async function processKnowledgeJob(
   if (!type) return;
 
   if (type === KnowledgeJobType.INDEX_SOURCE) return dependencies.processIndexSourceJob(jobId);
+  if (type === KnowledgeJobType.REMOVE_SOURCE) return dependencies.processRemoveSourceJob(jobId);
+  if (type === KnowledgeJobType.REBUILD_INDEX) return dependencies.processRebuildIndexJob(jobId);
   if (type === KnowledgeJobType.EXECUTE_QUERY) return dependencies.processKnowledgeQueryJob(jobId);
   await dependencies.failKnowledgeJob(jobId, unsupportedType(type));
 }
@@ -63,5 +73,12 @@ export async function failExhaustedKnowledgeJob(
     await dependencies.failKnowledgeQueryJob(jobId, error);
     return;
   }
-  await dependencies.failKnowledgeJob(jobId, type === KnowledgeJobType.INDEX_SOURCE ? error : unsupportedType(type));
+  if (type === KnowledgeJobType.REMOVE_SOURCE) {
+    await dependencies.failRemoveSourceJob(jobId, error);
+    return;
+  }
+  await dependencies.failKnowledgeJob(
+    jobId,
+    type === KnowledgeJobType.INDEX_SOURCE || type === KnowledgeJobType.REBUILD_INDEX ? error : unsupportedType(type),
+  );
 }

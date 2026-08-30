@@ -2,15 +2,17 @@ import { DataClassification, KnowledgeSourceStatus, KnowledgeVisibility } from "
 import { Router } from "express";
 import { z } from "zod";
 import { AppError } from "../../lib/errors.js";
-import { authenticate } from "../../middleware/auth.js";
+import { authenticate, requireRole } from "../../middleware/auth.js";
 import { requireWorkspaceAccess, requireWorkspaceRole } from "../../middleware/workspace-access.js";
 import {
   createKnowledgeQuery,
   createKnowledgeSource,
+  deleteKnowledgeSource,
   getKnowledgeQuery,
   getKnowledgeSource,
   listKnowledgeSources,
   reindexKnowledgeSource,
+  requestKnowledgeIndexRebuild,
 } from "./knowledge.service.js";
 
 export const knowledgeRouter = Router();
@@ -81,6 +83,13 @@ knowledgeRouter.get("/knowledge-sources/:sourceId", authenticate, async (request
   } catch (error) { next(error); }
 });
 
+knowledgeRouter.delete("/knowledge-sources/:sourceId", authenticate, async (request, response, next) => {
+  try {
+    const { sourceId } = idParamsSchema.parse(request.params);
+    response.status(202).json(await deleteKnowledgeSource(sourceId, request.user!));
+  } catch (error) { next(error); }
+});
+
 knowledgeRouter.post("/knowledge-sources/:sourceId/reindex", authenticate, async (request, response, next) => {
   try {
     const { sourceId } = idParamsSchema.parse(request.params);
@@ -93,6 +102,12 @@ knowledgeRouter.post("/workspaces/:workspaceId/knowledge-queries", authenticate,
     const input = createQuerySchema.parse(request.body);
     const result = await createKnowledgeQuery({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, ...input });
     response.status(202).json(result);
+  } catch (error) { next(error); }
+});
+
+knowledgeRouter.post("/admin/knowledge-indexes/rebuild", authenticate, requireRole("ADMIN"), async (request, response, next) => {
+  try {
+    response.status(202).json(await requestKnowledgeIndexRebuild(request.user!));
   } catch (error) { next(error); }
 });
 

@@ -573,6 +573,7 @@ export const openApiDocument = {
             required: ["run"],
             properties: { run: ref("AgentRun") },
           }),
+          "409": responseRef("Conflict"),
           "422": responseRef("UnprocessableEntity"),
           ...securedErrors,
         },
@@ -722,6 +723,18 @@ export const openApiDocument = {
           ...securedErrors,
         },
       },
+      delete: {
+        operationId: "deleteKnowledgeSource",
+        summary: "Delete a knowledge source",
+        description: "Requires global ADMIN or ADMIN membership in the source workspace. The source is hidden immediately and Qdrant cleanup runs asynchronously.",
+        tags: ["Knowledge"],
+        parameters: [parameterRef("SourceId")],
+        responses: {
+          "202": jsonResponse("Knowledge source removal accepted or already in progress.", ref("KnowledgeSourceRemovalResult")),
+          "404": responseRef("NotFound"),
+          ...securedErrors,
+        },
+      },
     },
     "/api/knowledge-sources/{sourceId}/reindex": {
       post: {
@@ -766,6 +779,19 @@ export const openApiDocument = {
         },
         responses: {
           "202": jsonResponse("Knowledge query and execution job created.", ref("KnowledgeQueryJobResult")),
+          "503": responseRef("ServiceUnavailable"),
+          ...securedErrors,
+        },
+      },
+    },
+    "/api/admin/knowledge-indexes/rebuild": {
+      post: {
+        operationId: "rebuildKnowledgeIndex",
+        summary: "Rebuild the active knowledge index",
+        description: "Requires global ADMIN. Queues a durable coordinator job that reindexes every active knowledge source into the current active index.",
+        tags: ["Knowledge"],
+        responses: {
+          "202": jsonResponse("Active knowledge index rebuild accepted.", ref("KnowledgeIndexJobResult")),
           "503": responseRef("ServiceUnavailable"),
           ...securedErrors,
         },
@@ -1094,7 +1120,22 @@ export const openApiDocument = {
           sourceArtifactId: { type: ["string", "null"], format: "uuid" },
           dataClassification: ref("DataClassification"),
           status: ref("RunStatus"),
-          state: {},
+          state: {
+            type: "object",
+            additionalProperties: true,
+            properties: {
+              tokenBudget: {
+                type: "object",
+                additionalProperties: false,
+                required: ["maxInputTokens", "maxOutputTokens", "maxTotalTokens"],
+                properties: {
+                  maxInputTokens: { type: "integer", minimum: 1 },
+                  maxOutputTokens: { type: "integer", minimum: 1 },
+                  maxTotalTokens: { type: "integer", minimum: 1 },
+                },
+              },
+            },
+          },
           result: {},
           maxTurns: { type: "integer" },
           maxToolCalls: { type: "integer" },
@@ -1250,6 +1291,18 @@ export const openApiDocument = {
         additionalProperties: false,
         required: ["knowledgeSource", "job"],
         properties: { knowledgeSource: ref("KnowledgeSource"), job: ref("KnowledgeJob") },
+      },
+      KnowledgeSourceRemovalResult: {
+        type: "object",
+        additionalProperties: false,
+        required: ["knowledgeSource", "jobs"],
+        properties: { knowledgeSource: ref("KnowledgeSource"), jobs: { type: "array", items: ref("KnowledgeJob") } },
+      },
+      KnowledgeIndexJobResult: {
+        type: "object",
+        additionalProperties: false,
+        required: ["index", "job"],
+        properties: { index: ref("KnowledgeIndex"), job: ref("KnowledgeJob") },
       },
       KnowledgeQueryJobResult: {
         type: "object",

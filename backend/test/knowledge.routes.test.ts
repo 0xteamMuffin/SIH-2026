@@ -7,10 +7,12 @@ const { authState, knowledgeServiceMock, workspaceMemberMock } = vi.hoisted(() =
   knowledgeServiceMock: {
     createKnowledgeQuery: vi.fn(),
     createKnowledgeSource: vi.fn(),
+    deleteKnowledgeSource: vi.fn(),
     getKnowledgeQuery: vi.fn(),
     getKnowledgeSource: vi.fn(),
     listKnowledgeSources: vi.fn(),
     reindexKnowledgeSource: vi.fn(),
+    requestKnowledgeIndexRebuild: vi.fn(),
   },
   workspaceMemberMock: { findUnique: vi.fn() },
 }));
@@ -129,6 +131,17 @@ describe("knowledge routes", () => {
     expect(invalid.status).toBe(400);
   });
 
+  it("accepts an idempotent source deletion request", async () => {
+    const result = { knowledgeSource: { id: sourceId, status: "DELETING" }, jobs: [{ id: "70000000-0000-4000-8000-000000000001", status: "QUEUED" }] };
+    knowledgeServiceMock.deleteKnowledgeSource.mockResolvedValue(result);
+
+    const response = await request(createTestApp()).delete(`/api/knowledge-sources/${sourceId}`);
+
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual(result);
+    expect(knowledgeServiceMock.deleteKnowledgeSource).toHaveBeenCalledWith(sourceId, expect.objectContaining({ id: "30000000-0000-4000-8000-000000000001" }));
+  });
+
   it("creates and retrieves asynchronous knowledge queries", async () => {
     const created = { knowledgeQuery: { id: queryId, status: "QUEUED" }, job: { status: "QUEUED" } };
     knowledgeServiceMock.createKnowledgeQuery.mockResolvedValue(created);
@@ -161,5 +174,17 @@ describe("knowledge routes", () => {
     expect(response.status).toBe(400);
     expect(response.body).toEqual({ error: { code: "INVALID_INPUT", message: "Request validation failed" } });
     expect(knowledgeServiceMock.createKnowledgeQuery).not.toHaveBeenCalled();
+  });
+
+  it("restricts active-index rebuilds to global administrators", async () => {
+    knowledgeServiceMock.requestKnowledgeIndexRebuild.mockResolvedValue({ index: { id: "50000000-0000-4000-8000-000000000001" }, job: { status: "QUEUED" } });
+
+    const forbidden = await request(createTestApp()).post("/api/admin/knowledge-indexes/rebuild");
+    authState.role = "ADMIN";
+    const accepted = await request(createTestApp()).post("/api/admin/knowledge-indexes/rebuild");
+
+    expect(forbidden.status).toBe(403);
+    expect(accepted.status).toBe(202);
+    expect(knowledgeServiceMock.requestKnowledgeIndexRebuild).toHaveBeenCalledOnce();
   });
 });
