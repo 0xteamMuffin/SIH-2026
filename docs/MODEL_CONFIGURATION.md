@@ -24,6 +24,8 @@ Database, storage, authentication, and sandbox variables remain separate because
 
 Lower priority numbers are selected first. Other matching profiles become ordered fallback candidates. Provider-specific model names are configuration values and may be replaced without changing backend code.
 
+The development registry currently assigns separate free profiles for general documents, deeper reasoning, coding, vision, text embeddings, and multimodal embeddings. Free model availability changes over time, so these entries are configuration rather than application constants.
+
 ## Remote inference
 
 Remote inference requires all of the following:
