@@ -29,6 +29,8 @@ const schema = z.object({
   API_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(100_000).default(1_000),
   LOGIN_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(900_000),
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(1_000).default(10),
+  READINESS_TIMEOUT_MS: z.coerce.number().int().min(100).max(30_000).default(3_000),
+  DOCLING_REQUIRED: booleanString.default(false),
   DATABASE_URL: z.string().min(1),
   JWT_SECRET: z.string().min(32),
   SEED_ADMIN_EMAIL: z.string().email(),

@@ -1,7 +1,7 @@
 {
   "name": "sih-2026-backend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -10,7 +10,10 @@
     "start:worker": "node dist/worker.js",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
+    "test:security": "vitest run test/artifacts.routes.test.ts test/artifact-validation.test.ts test/agent.service.test.ts test/agent-approval.service.test.ts test/model-provider.test.ts test/embedding-provider.test.ts test/knowledge.routes.test.ts test/workspace-rbac.test.ts",
     "test:openapi": "vitest run test/openapi.test.ts",
+    "test:migrations": "node ../ops/verify-empty-migrations.mjs",
+    "test:acceptance": "node ../ops/backend-acceptance.mjs",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy"
@@ -18,6 +21,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.735.0",
     "@prisma/client": "^6.5.0",
+    "@prometheus-io/client": "^0.16.1",
     "@qdrant/js-client-rest": "~1.19.0",
     "amqplib": "^2.0.1",
     "bcryptjs": "^2.4.3",

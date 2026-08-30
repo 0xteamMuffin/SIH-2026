@@ -1,16 +1,18 @@
-import express from "express";
+import express, { type RequestHandler } from "express";
 import { errorHandler, notFoundHandler } from "./lib/errors.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { workspacesRouter } from "./modules/workspaces/workspaces.routes.js";
 import { artifactsRouter } from "./modules/artifacts/artifacts.routes.js";
 import { agentRouter } from "./modules/agent/agent.routes.js";
 import { knowledgeRouter } from "./modules/knowledge/knowledge.routes.js";
+import { auditRouter } from "./modules/audit/audit.routes.js";
 import { env } from "./config/env.js";
-import { getQdrantVectorStore } from "./infrastructure/vector-store/qdrant-vector-store.js";
-import type { VectorStoreAdmin } from "./infrastructure/vector-store/vector-store-admin.js";
 import { mountApiRateLimits, mountRequestHardening } from "./middleware/request-hardening.js";
+import { authenticate, requireRole } from "./middleware/auth.js";
+import { metricsRegistry, observeRequests } from "./modules/observability/metrics.js";
+import { checkReadiness, type ReadinessResult } from "./modules/observability/readiness.js";
 
-const API_VERSION = "0.1.0";
+const API_VERSION = "0.2.0";
 const OPENAPI_VERSION = "3.1.0";
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const responseRef = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -47,6 +49,7 @@ export const openApiDocument = {
     { name: "Runs", description: "Asynchronous agent execution and cancellation." },
     { name: "Approvals", description: "Human decisions for approval-gated agent tools." },
     { name: "Knowledge", description: "Indexed knowledge sources and asynchronous retrieval queries." },
+    { name: "Audit", description: "Workspace-scoped security and operational audit events." },
   ],
   paths: {
     "/health": {
@@ -66,10 +69,29 @@ export const openApiDocument = {
         operationId: "getReadiness",
         summary: "Get dependency readiness",
         tags: ["System"],
-        security: [],
         responses: {
           "200": jsonResponse("The service and required dependencies are ready.", ref("Readiness")),
           "503": jsonResponse("At least one required dependency is unavailable.", ref("Readiness")),
+          "401": responseRef("Unauthorized"),
+          "403": responseRef("Forbidden"),
+          "500": responseRef("InternalError"),
+        },
+      },
+    },
+    "/metrics": {
+      get: {
+        operationId: "getMetrics",
+        summary: "Get Prometheus metrics",
+        description: "Requires the global ADMIN role. Labels exclude user, workspace, run, job, and model identifiers.",
+        tags: ["System"],
+        responses: {
+          "200": {
+            description: "Prometheus text exposition.",
+            headers: { "X-Request-ID": { $ref: "#/components/headers/RequestId" } },
+            content: { "text/plain": { schema: { type: "string" } } },
+          },
+          "401": responseRef("Unauthorized"),
+          "403": responseRef("Forbidden"),
           "500": responseRef("InternalError"),
         },
       },
@@ -412,6 +434,7 @@ export const openApiDocument = {
           parameterRef("Limit"),
           { name: "kind", in: "query", schema: ref("ArtifactKind") },
           { name: "extractionStatus", in: "query", schema: ref("ArtifactExtractionStatus") },
+          { name: "lifecycleStatus", in: "query", schema: ref("ArtifactLifecycleStatus") },
         ],
         responses: {
           "200": jsonResponse("A page of artifact metadata.", {
@@ -442,6 +465,8 @@ export const openApiDocument = {
                 properties: {
                   file: { type: "string", format: "binary" },
                   classification: ref("DataClassification"),
+                  previousArtifactId: { type: "string", format: "uuid", description: "Immediate predecessor when uploading a new artifact version." },
+                  retentionUntil: { type: "string", format: "date-time", description: "Optional time before which deletion is prohibited." },
                 },
               },
             },
@@ -456,6 +481,26 @@ export const openApiDocument = {
           }),
           "413": responseRef("PayloadTooLarge"),
           "415": responseRef("UnsupportedMediaType"),
+          ...securedErrors,
+        },
+      },
+    },
+    "/api/workspaces/{workspaceId}/artifacts/{artifactId}": {
+      delete: {
+        operationId: "deleteArtifact",
+        summary: "Request artifact deletion",
+        description: "Requires the workspace ADMIN role. Transitions the artifact to DELETING and queues idempotent physical cleanup.",
+        tags: ["Artifacts"],
+        parameters: [parameterRef("WorkspaceId"), parameterRef("ArtifactId")],
+        responses: {
+          "202": jsonResponse("Artifact deletion accepted or already in progress.", {
+            type: "object",
+            additionalProperties: false,
+            required: ["artifact", "deletionJob"],
+            properties: { artifact: ref("Artifact"), deletionJob: ref("ArtifactDeletionJob") },
+          }),
+          "404": responseRef("NotFound"),
+          "409": responseRef("Conflict"),
           ...securedErrors,
         },
       },
@@ -726,6 +771,57 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/workspaces/{workspaceId}/audit-events": {
+      get: {
+        operationId: "listAuditEvents",
+        summary: "List workspace audit events",
+        description: "Returns only persisted sanitized metadata and requires workspace access.",
+        tags: ["Audit"],
+        parameters: [
+          parameterRef("WorkspaceId"), parameterRef("Cursor"), parameterRef("Limit"),
+          { name: "eventType", in: "query", schema: { type: "string", minLength: 1, maxLength: 100 } },
+          { name: "actorId", in: "query", schema: { type: "string", format: "uuid" } },
+          { name: "runId", in: "query", schema: { type: "string", format: "uuid" } },
+          { name: "from", in: "query", schema: { type: "string", format: "date-time" } },
+          { name: "to", in: "query", schema: { type: "string", format: "date-time" } },
+        ],
+        responses: {
+          "200": jsonResponse("A page of audit events.", {
+            type: "object", additionalProperties: false, required: ["auditEvents", "pagination"],
+            properties: { auditEvents: { type: "array", items: ref("AuditEvent") }, pagination: ref("Pagination") },
+          }),
+          ...securedErrors,
+        },
+      },
+    },
+    "/api/workspaces/{workspaceId}/audit-events/export": {
+      get: {
+        operationId: "exportAuditEvents",
+        summary: "Export workspace audit events",
+        description: "Requires the workspace ADMIN role and exports only persisted sanitized metadata.",
+        tags: ["Audit"],
+        parameters: [
+          parameterRef("WorkspaceId"),
+          { name: "format", in: "query", schema: { type: "string", enum: ["json", "ndjson"], default: "json" } },
+          { name: "eventType", in: "query", schema: { type: "string", minLength: 1, maxLength: 100 } },
+          { name: "actorId", in: "query", schema: { type: "string", format: "uuid" } },
+          { name: "runId", in: "query", schema: { type: "string", format: "uuid" } },
+          { name: "from", in: "query", schema: { type: "string", format: "date-time" } },
+          { name: "to", in: "query", schema: { type: "string", format: "date-time" } },
+        ],
+        responses: {
+          "200": {
+            description: "A JSON array or newline-delimited JSON stream selected by format.",
+            headers: { "X-Request-ID": { $ref: "#/components/headers/RequestId" } },
+            content: {
+              "application/json": { schema: { type: "array", items: ref("AuditEvent") } },
+              "application/x-ndjson": { schema: { type: "string" } },
+            },
+          },
+          ...securedErrors,
+        },
+      },
+    },
     "/api/knowledge-queries/{queryId}": {
       get: {
         operationId: "getKnowledgeQuery",
@@ -872,10 +968,12 @@ export const openApiDocument = {
       DataClassification: { type: "string", enum: ["PUBLIC", "SYNTHETIC", "INTERNAL", "CONFIDENTIAL"] },
       ArtifactKind: { type: "string", enum: ["SOURCE", "GENERATED_DOCX", "CODE_OUTPUT"] },
       ArtifactExtractionStatus: { type: "string", enum: ["NOT_REQUIRED", "PENDING", "PROCESSING", "COMPLETED", "FAILED"] },
+      ArtifactLifecycleStatus: { type: "string", enum: ["ACTIVE", "DELETING", "DELETED"] },
+      ArtifactDeletionJobStatus: { type: "string", enum: ["QUEUED", "RUNNING", "SUCCEEDED", "FAILED"] },
       Artifact: {
         type: "object",
         additionalProperties: true,
-        required: ["id", "workspaceId", "createdBy", "kind", "classification", "extractionStatus", "filename", "mimeType", "sizeBytes", "createdAt"],
+        required: ["id", "workspaceId", "createdBy", "kind", "classification", "extractionStatus", "filename", "mimeType", "sizeBytes", "versionSetId", "version", "lifecycleStatus", "createdAt"],
         properties: {
           id: { type: "string", format: "uuid" },
           workspaceId: { type: "string", format: "uuid" },
@@ -894,7 +992,35 @@ export const openApiDocument = {
           mimeType: { type: "string" },
           objectKey: { type: "string" },
           sizeBytes: { oneOf: [{ type: "integer", minimum: 0 }, { type: "string", pattern: "^[0-9]+$" }] },
+          versionSetId: { type: "string", format: "uuid" },
+          version: { type: "integer", minimum: 1 },
+          previousVersionId: { type: ["string", "null"], format: "uuid" },
+          lifecycleStatus: ref("ArtifactLifecycleStatus"),
+          retentionUntil: { type: ["string", "null"], format: "date-time" },
+          deletionRequestedAt: { type: ["string", "null"], format: "date-time" },
+          deletedAt: { type: ["string", "null"], format: "date-time" },
           createdAt: { type: "string", format: "date-time" },
+        },
+      },
+      ArtifactDeletionJob: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "artifactId", "requestedBy", "status", "attempts", "maxAttempts", "availableAt", "createdAt", "updatedAt"],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          artifactId: { type: "string", format: "uuid" },
+          requestedBy: { type: "string", format: "uuid" },
+          status: ref("ArtifactDeletionJobStatus"),
+          attempts: { type: "integer", minimum: 0 },
+          maxAttempts: { type: "integer", minimum: 1 },
+          availableAt: { type: "string", format: "date-time" },
+          leaseId: { type: ["string", "null"], format: "uuid" },
+          leaseExpiresAt: { type: ["string", "null"], format: "date-time" },
+          lastError: { type: ["string", "null"] },
+          startedAt: { type: ["string", "null"], format: "date-time" },
+          completedAt: { type: ["string", "null"], format: "date-time" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
         },
       },
       Pagination: {
@@ -922,9 +1048,30 @@ export const openApiDocument = {
           dependencies: {
             type: "object",
             additionalProperties: false,
-            required: ["qdrant"],
-            properties: { qdrant: { type: "string", enum: ["ready", "unavailable"] } },
+            required: ["postgresql", "minio", "rabbitmq", "qdrant", "sandbox", "docling"],
+            properties: {
+              postgresql: { type: "string", enum: ["ready", "unavailable"] },
+              minio: { type: "string", enum: ["ready", "unavailable"] },
+              rabbitmq: { type: "string", enum: ["ready", "unavailable"] },
+              qdrant: { type: "string", enum: ["ready", "unavailable"] },
+              sandbox: { type: "string", enum: ["ready", "unavailable"] },
+              docling: { type: "string", enum: ["ready", "unavailable", "optional_unavailable"] },
+            },
           },
+        },
+      },
+      AuditEvent: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "actorId", "workspaceId", "runId", "eventType", "metadata", "createdAt"],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          actorId: { type: ["string", "null"], format: "uuid" },
+          workspaceId: { type: ["string", "null"], format: "uuid" },
+          runId: { type: ["string", "null"], format: "uuid" },
+          eventType: { type: "string" },
+          metadata: { type: "object", additionalProperties: true },
+          createdAt: { type: "string", format: "date-time" },
         },
       },
       RunStatus: { type: "string", enum: ["PENDING", "RUNNING", "WAITING_APPROVAL", "COMPLETED", "FAILED", "CANCELLED"] },
@@ -1115,8 +1262,16 @@ export const openApiDocument = {
   security: [{ bearerAuth: [] }],
 };
 
-const defaultDependencies = {
-  vectorStore: { isReady: () => getQdrantVectorStore().isReady() },
+type ApplicationDependencies = {
+  readiness: () => Promise<ReadinessResult>;
+  operationalAuth: RequestHandler[];
+  metrics: Pick<typeof metricsRegistry, "contentType" | "metrics">;
+};
+
+const defaultDependencies: ApplicationDependencies = {
+  readiness: checkReadiness,
+  operationalAuth: [authenticate, requireRole("ADMIN")],
+  metrics: metricsRegistry,
 };
 
 export const apiRouteMounts = [
@@ -1125,23 +1280,29 @@ export const apiRouteMounts = [
   { prefix: "/api", router: artifactsRouter },
   { prefix: "/api", router: agentRouter },
   { prefix: "/api", router: knowledgeRouter },
+  { prefix: "/api", router: auditRouter },
 ] as const;
 
-export function createApp(dependencies: { vectorStore: Pick<VectorStoreAdmin, "isReady"> } = defaultDependencies) {
+export function createApp(overrides: Partial<ApplicationDependencies> = {}) {
+  const dependencies = { ...defaultDependencies, ...overrides };
   const application = express();
   mountRequestHardening(application);
+  application.use(observeRequests);
   application.get("/health", (_request, response) => response.json({ status: "ok", mode: env.APP_MODE, sovereign: env.APP_MODE === "sovereign" }));
-  application.get("/ready", async (_request, response) => {
-    let qdrantReady = false;
+  application.get("/ready", ...dependencies.operationalAuth, async (_request, response, next) => {
     try {
-      qdrantReady = await dependencies.vectorStore.isReady();
-    } catch {
-      // Dependency failures make the process unready, not unhealthy.
+      const readiness = await dependencies.readiness();
+      response.status(readiness.status === "ready" ? 200 : 503).json(readiness);
+    } catch (error) {
+      next(error);
     }
-    response.status(qdrantReady ? 200 : 503).json({
-      status: qdrantReady ? "ready" : "not_ready",
-      dependencies: { qdrant: qdrantReady ? "ready" : "unavailable" },
-    });
+  });
+  application.get("/metrics", ...dependencies.operationalAuth, async (_request, response, next) => {
+    try {
+      response.type(dependencies.metrics.contentType).send(await dependencies.metrics.metrics());
+    } catch (error) {
+      next(error);
+    }
   });
   application.get("/openapi.json", (_request, response) => response.json(openApiDocument));
   mountApiRateLimits(application);

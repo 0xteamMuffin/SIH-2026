@@ -32,13 +32,13 @@ function documentedOperations() {
 
 describe("OpenAPI contract", () => {
   it("serves the versioned OpenAPI 3.1 document without authentication", async () => {
-    const response = await request(createApp({ vectorStore: { isReady: vi.fn() } })).get("/openapi.json");
+    const response = await request(createApp()).get("/openapi.json");
 
     expect(response.status).toBe(200);
     expect(response.type).toBe("application/json");
     expect(response.body).toEqual(openApiDocument);
     expect(response.body.openapi).toBe("3.1.0");
-    expect(response.body.info.version).toBe("0.1.0");
+    expect(response.body.info.version).toBe("0.2.0");
   });
 
   it("is structurally valid OpenAPI 3.1", async () => {
@@ -49,7 +49,7 @@ describe("OpenAPI contract", () => {
   });
 
   it("represents every registered route and has no stale documented operations", () => {
-    const application = createApp({ vectorStore: { isReady: vi.fn() } });
+    const application = createApp();
     const directOperations = routerOperations((application as unknown as { router: { stack: RouteLayer[] } }).router);
     const mountedOperations = apiRouteMounts.flatMap(({ prefix, router }) =>
       routerOperations(router as unknown as { stack: RouteLayer[] }, prefix));

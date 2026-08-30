@@ -1,45 +1,72 @@
 import request from "supertest";
+import type { RequestHandler } from "express";
 import { describe, expect, it, vi } from "vitest";
 import { app, createApp } from "../src/app.js";
 
+const allowOperationalAccess: RequestHandler = (_request, _response, next) => next();
+const allReady = {
+  status: "ready" as const,
+  dependencies: {
+    postgresql: "ready" as const,
+    minio: "ready" as const,
+    rabbitmq: "ready" as const,
+    qdrant: "ready" as const,
+    sandbox: "ready" as const,
+    docling: "ready" as const,
+  },
+};
+
 describe("application boundary", () => {
   it("reports the configured operating mode", async () => {
-    const isReady = vi.fn();
-    const response = await request(createApp({ vectorStore: { isReady } })).get("/health");
+    const readiness = vi.fn();
+    const response = await request(createApp({ readiness })).get("/health");
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: "ok", mode: "development", sovereign: false });
-    expect(isReady).not.toHaveBeenCalled();
+    expect(readiness).not.toHaveBeenCalled();
   });
 
-  it("reports readiness when Qdrant is available", async () => {
-    const isReady = vi.fn().mockResolvedValue(true);
-    const response = await request(createApp({ vectorStore: { isReady } })).get("/ready");
+  it("reports readiness when required dependencies are available", async () => {
+    const readiness = vi.fn().mockResolvedValue(allReady);
+    const response = await request(createApp({ readiness, operationalAuth: [allowOperationalAccess] })).get("/ready");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ status: "ready", dependencies: { qdrant: "ready" } });
-    expect(isReady).toHaveBeenCalledOnce();
+    expect(response.body).toEqual(allReady);
+    expect(readiness).toHaveBeenCalledOnce();
   });
 
-  it("fails readiness when Qdrant is unavailable", async () => {
-    const isReady = vi.fn().mockResolvedValue(false);
-    const response = await request(createApp({ vectorStore: { isReady } })).get("/ready");
+  it("fails readiness when a required dependency is unavailable", async () => {
+    const result = { ...allReady, status: "not_ready" as const, dependencies: { ...allReady.dependencies, postgresql: "unavailable" as const } };
+    const response = await request(createApp({ readiness: vi.fn().mockResolvedValue(result), operationalAuth: [allowOperationalAccess] })).get("/ready");
 
     expect(response.status).toBe(503);
-    expect(response.body).toEqual({ status: "not_ready", dependencies: { qdrant: "unavailable" } });
+    expect(response.body).toEqual(result);
   });
 
-  it("fails readiness when the Qdrant check errors", async () => {
-    const isReady = vi.fn().mockRejectedValue(new Error("connection failed"));
-    const response = await request(createApp({ vectorStore: { isReady } })).get("/ready");
+  it("protects operational details while leaving health public", async () => {
+    const application = createApp({ readiness: vi.fn().mockResolvedValue(allReady) });
 
-    expect(response.status).toBe(503);
-    expect(response.body).toEqual({ status: "not_ready", dependencies: { qdrant: "unavailable" } });
+    expect((await request(application).get("/health")).status).toBe(200);
+    expect((await request(application).get("/ready")).status).toBe(401);
+    expect((await request(application).get("/metrics")).status).toBe(401);
+  });
+
+  it("serves Prometheus exposition after operational authorization", async () => {
+    const metrics = {
+      contentType: "text/plain; version=0.0.4; charset=utf-8" as const,
+      metrics: vi.fn().mockResolvedValue("# HELP workbench_test Test metric\n# TYPE workbench_test gauge\nworkbench_test 1\n"),
+    };
+    const response = await request(createApp({ operationalAuth: [allowOperationalAccess], metrics })).get("/metrics");
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toContain("text/plain");
+    expect(response.text).toContain("workbench_test 1");
+    expect(metrics.metrics).toHaveBeenCalledOnce();
   });
 
   it("preserves a valid incoming request ID", async () => {
     const requestId = "4f73156a-942c-4f91-8974-1d57e6cf2b22";
-    const response = await request(createApp({ vectorStore: { isReady: vi.fn() } }))
+    const response = await request(createApp())
       .get("/health")
       .set("X-Request-ID", requestId);
 
@@ -47,7 +74,7 @@ describe("application boundary", () => {
   });
 
   it("replaces an invalid incoming request ID with a UUID", async () => {
-    const response = await request(createApp({ vectorStore: { isReady: vi.fn() } }))
+    const response = await request(createApp())
       .get("/health")
       .set("X-Request-ID", "not-a-uuid");
 
@@ -55,7 +82,7 @@ describe("application boundary", () => {
   });
 
   it("allows configured CORS origins", async () => {
-    const response = await request(createApp({ vectorStore: { isReady: vi.fn() } }))
+    const response = await request(createApp())
       .get("/health")
       .set("Origin", "https://app.test.local");
 
@@ -65,7 +92,7 @@ describe("application boundary", () => {
   });
 
   it("rejects unconfigured CORS origins", async () => {
-    const response = await request(createApp({ vectorStore: { isReady: vi.fn() } }))
+    const response = await request(createApp())
       .get("/health")
       .set("Origin", "https://attacker.test");
 
@@ -75,7 +102,7 @@ describe("application boundary", () => {
   });
 
   it("rate limits login attempts with a JSON error", async () => {
-    const application = createApp({ vectorStore: { isReady: vi.fn() } });
+    const application = createApp();
     await request(application).post("/api/auth/login").send({ email: "invalid" });
     await request(application).post("/api/auth/login").send({ email: "invalid" });
     const response = await request(application).post("/api/auth/login").send({ email: "invalid" });
@@ -86,7 +113,7 @@ describe("application boundary", () => {
   });
 
   it("rate limits general API requests without limiting health checks", async () => {
-    const application = createApp({ vectorStore: { isReady: vi.fn() } });
+    const application = createApp();
     await request(application).get("/api/unknown");
     await request(application).get("/api/unknown");
     await request(application).get("/api/unknown");

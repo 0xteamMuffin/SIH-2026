@@ -2,6 +2,12 @@
 
 This runbook covers the Compose deployment. Run recovery exercises on an isolated host and a fresh Compose project before relying on a backup. Never test a restore over the only copy of production data.
 
+## Probes and metrics
+
+`GET /health` is the public process-liveness probe and performs no dependency I/O. Authenticated global administrators can call `GET /ready` to probe PostgreSQL, MinIO, RabbitMQ, Qdrant, the sandbox runner, and Docling concurrently. Every probe is bounded by `READINESS_TIMEOUT_MS`; Docling reports `optional_unavailable` without blocking readiness unless `DOCLING_REQUIRED=true`.
+
+`GET /metrics` requires a global administrator and returns Prometheus text exposition. Request labels use only method, registered route template, and status code. Persisted run, knowledge-job, and model-invocation gauges use bounded enum labels and never workspace, user, prompt, or payload values.
+
 ## Version and image policy
 
 Service images and Dockerfile bases are pinned to release tags and registry digests. Update a tag and digest together after testing; never copy a digest from an unrelated tag or architecture. `docker compose pull` and `docker compose build --pull` should run only on the connected staging host used to prepare a release.
