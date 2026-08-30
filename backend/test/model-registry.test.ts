@@ -1,7 +1,8 @@
+import { DataClassification } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import { env } from "../src/config/env.js";
 import { modelProfiles, parseModelConfiguration, type ModelProfile } from "../src/infrastructure/models/model-registry.js";
-import { selectModel } from "../src/infrastructure/models/model-router.js";
+import { routingDecisionForPersistedRun, selectModel } from "../src/infrastructure/models/model-router.js";
 
 const profiles: ModelProfile[] = [
   { id: "general", providerId: "remote", location: "remote", baseUrl: "https://models.example/v1", modelId: "vendor/general", capabilities: ["general", "document"], priority: 20, enabled: true, sovereign: false, maxOutputTokens: 1_024 },
@@ -63,5 +64,20 @@ describe("model registry", () => {
     } finally {
       env.ALLOW_REMOTE_INFERENCE = previous;
     }
+  });
+
+  it("keeps a persisted primary first and reconstructs current ordered fallbacks", () => {
+    const decision = routingDecisionForPersistedRun({ taskCapability: "vision", modelProfile: "vision-fallback", modelReason: "persisted", dataClassification: DataClassification.PUBLIC }, profiles);
+
+    expect(decision.profile.id).toBe("vision-fallback");
+    expect(decision.fallbacks.map((profile) => profile.id)).toEqual(["vision-primary"]);
+  });
+
+  it("uses an eligible current fallback when a persisted remote primary is filtered out", () => {
+    const local: ModelProfile = { ...profiles[0], id: "local-general", providerId: "local", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "local/general", sovereign: true };
+    const decision = routingDecisionForPersistedRun({ taskCapability: "general", modelProfile: "remote-general", modelReason: "persisted", dataClassification: DataClassification.INTERNAL }, [local]);
+
+    expect(decision.profile.id).toBe("local-general");
+    expect(decision.reason).toContain("no longer eligible");
   });
 });

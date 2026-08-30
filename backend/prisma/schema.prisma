@@ -34,6 +34,13 @@ enum DataClassification {
   CONFIDENTIAL
 }
 
+enum ModelInvocationStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
 model User {
   id           String            @id @default(uuid()) @db.Uuid
   email        String            @unique
@@ -117,12 +124,36 @@ model AgentRun {
   requester          User               @relation(fields: [requestedBy], references: [id])
   messages           RunMessage[]
   toolCalls          RunToolCall[]
+  modelInvocations   ModelInvocation[]
   evidence           Evidence[]
   auditEvents        AuditEvent[]
 
   @@index([workspaceId, createdAt])
   @@index([status, leaseExpiresAt])
   @@map("agent_runs")
+}
+
+model ModelInvocation {
+  id               String                @id @default(uuid()) @db.Uuid
+  runId            String                @map("run_id") @db.Uuid
+  providerId       String                @map("provider_id")
+  profileId        String                @map("profile_id")
+  modelId          String                @map("model_id")
+  attempt          Int
+  status           ModelInvocationStatus @default(RUNNING)
+  latencyMs        Int?                  @map("latency_ms")
+  promptTokens     Int?                  @map("prompt_tokens")
+  completionTokens Int?                  @map("completion_tokens")
+  totalTokens      Int?                  @map("total_tokens")
+  finishReason     String?               @map("finish_reason")
+  sanitizedError   String?               @map("sanitized_error")
+  startedAt        DateTime              @default(now()) @map("started_at")
+  completedAt      DateTime?             @map("completed_at")
+  run              AgentRun              @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, attempt])
+  @@index([runId, startedAt])
+  @@map("model_invocations")
 }
 
 model RunMessage {

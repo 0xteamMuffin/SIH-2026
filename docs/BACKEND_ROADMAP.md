@@ -33,9 +33,10 @@ Status: in progress
 - [x] Replace hard-coded profiles with a validated model registry.
 - [x] Support multiple OpenRouter and local OpenAI-compatible models per capability.
 - [ ] Route general, document, vision, code, embedding, and reranking workloads independently.
-- [ ] Add deterministic priorities and configurable fallback chains.
-- [ ] Add provider timeouts, cancellation signals, bounded retries, and normalized failures.
-- [ ] Persist provider, model, latency, token usage, finish reason, and estimated cost.
+- [x] Add deterministic priorities and ordered fallback execution across eligible profiles.
+- [x] Add provider timeouts, cancellation signals, bounded provider-failure retries, and normalized failures.
+- [x] Persist provider, profile, model, attempt status, latency, token usage, finish reason, and sanitized failures.
+- [ ] Persist estimated invocation cost from versioned provider pricing metadata.
 - [ ] Add capability and availability checks without sending document content.
 
 Acceptance gate: at least two task capabilities select different configured models, provider failures follow policy, and confidential data cannot reach an external provider.
@@ -144,7 +145,8 @@ Status: pending
 - [ ] Add request IDs, access logs, redaction, metrics, and structured error logging.
 - [ ] Separate liveness from dependency-aware readiness checks.
 - [ ] Add audit search and export APIs.
-- [ ] Record external-provider attempts and provide visible zero-egress evidence in sovereign mode.
+- [x] Record every eligible local and external provider invocation attempt.
+- [ ] Provide visible zero-egress evidence in sovereign mode.
 - [ ] Pin container versions, add health checks, graceful shutdown, and resource limits.
 
 Acceptance gate: operators can diagnose every failed dependency or run, API contracts are machine-tested, and sovereign deployment evidence is reproducible.
@@ -164,8 +166,8 @@ Acceptance gate: a clean machine can install and run the documented demonstratio
 
 ## Immediate commit sequence
 
-1. Persist model invocation usage and audit metadata.
-2. Add bounded execution progress events and failure details.
-3. Enforce global, workspace, and user concurrency limits.
+1. Add bounded execution progress events and failure details.
+2. Enforce global, workspace, and user concurrency limits.
+3. Add provider capability and availability checks without document content.
 
 The sequence may be adjusted only when a discovered dependency or security defect must be resolved first.

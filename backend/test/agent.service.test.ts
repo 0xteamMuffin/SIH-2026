@@ -1,7 +1,7 @@
 import { DataClassification, RunStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { auditMock, agentRunMock, outboxEventMock, runToolCallMock, transactionMock } = vi.hoisted(() => ({
+const { auditMock, agentRunMock, evidenceMock, invokeModelMock, outboxEventMock, runMessageMock, runToolCallMock, transactionMock } = vi.hoisted(() => ({
   auditMock: vi.fn(),
   agentRunMock: {
     create: vi.fn(),
@@ -10,13 +10,17 @@ const { auditMock, agentRunMock, outboxEventMock, runToolCallMock, transactionMo
     findUniqueOrThrow: vi.fn(),
     updateMany: vi.fn(),
   },
+  evidenceMock: { create: vi.fn() },
+  invokeModelMock: vi.fn(),
   outboxEventMock: { create: vi.fn() },
+  runMessageMock: { create: vi.fn() },
   runToolCallMock: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   transactionMock: vi.fn(),
 }));
 
-vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock, outboxEvent: outboxEventMock, runToolCall: runToolCallMock, $transaction: transactionMock } }));
+vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock, evidence: evidenceMock, outboxEvent: outboxEventMock, runMessage: runMessageMock, runToolCall: runToolCallMock, $transaction: transactionMock } }));
 vi.mock("../src/lib/audit.js", () => ({ audit: auditMock }));
+vi.mock("../src/infrastructure/models/model-orchestrator.js", () => ({ invokeModelWithFallbacks: invokeModelMock }));
 
 import { cancelRun, createRun, executeRunTool, failRun, getRun, processRun } from "../src/modules/agent/agent.service.js";
 
@@ -41,12 +45,65 @@ describe("agent run access", () => {
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ runId: "run-1", eventType: "AGENT_RUN_CREATED" }));
   });
 
+  it("selects a local profile for restricted data instead of the higher-priority remote profile", async () => {
+    const run = { id: "run-1", workspaceId: "workspace-1", status: RunStatus.PENDING };
+    agentRunMock.create.mockResolvedValue(run);
+    outboxEventMock.create.mockResolvedValue({ id: "event-1" });
+
+    await createRun({ workspaceId: "workspace-1", userId: "user-1", task: "Explain preventive maintenance", dataClassification: DataClassification.CONFIDENTIAL });
+
+    expect(agentRunMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ modelProfile: "local-general" }) });
+  });
+
   it("treats a duplicate delivery for a terminal run as a no-op", async () => {
     agentRunMock.findUnique.mockResolvedValue({ id: "run-1", status: RunStatus.COMPLETED });
 
     await expect(processRun("run-1")).resolves.toBeUndefined();
 
     expect(agentRunMock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("persists the selected profile when a worker fallback succeeds", async () => {
+    const run = {
+      id: "run-1",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Explain preventive maintenance",
+      taskCapability: "general",
+      modelProfile: "remote-general",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.PUBLIC,
+      sourceArtifactId: null,
+      status: RunStatus.PENDING,
+    };
+    const selectedProfile = {
+      id: "local-general",
+      providerId: "local-runtime",
+      location: "local",
+      baseUrl: "http://localhost:11434/v1",
+      modelId: "qwen3.5:4b",
+      capabilities: ["general", "document"],
+      priority: 1000,
+      enabled: true,
+      sovereign: true,
+      maxOutputTokens: 2048,
+    };
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    runToolCallMock.findUnique.mockResolvedValue(null);
+    runToolCallMock.create.mockResolvedValue({});
+    runToolCallMock.update.mockResolvedValue({});
+    runMessageMock.create.mockResolvedValue({});
+    evidenceMock.create.mockResolvedValue({ id: "evidence-1" });
+    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Use scheduled inspections.", provider: "local-runtime", modelId: "qwen3.5:4b", latencyMs: 10 } });
+
+    await processRun("run-1");
+
+    expect(agentRunMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "run-1", status: RunStatus.RUNNING }),
+      data: expect.objectContaining({ modelProfile: "local-general", modelReason: expect.stringContaining("completed the model invocation") }),
+    }));
   });
 
   it("does not overwrite a cancelled run after worker failure", async () => {
@@ -64,6 +121,7 @@ describe("agent run access", () => {
 
     expect(agentRunMock.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "run-1", workspace: { members: { some: { userId: "user-1" } } } },
+      include: expect.objectContaining({ modelInvocations: { orderBy: { attempt: "asc" } } }),
     }));
   });
 
