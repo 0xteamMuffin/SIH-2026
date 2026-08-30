@@ -35,6 +35,24 @@ describe("OpenAI-compatible embedding provider", () => {
     vi.restoreAllMocks();
   });
 
+  it("accepts profiles enriched with registry routing metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(responseFor(["alpha"]));
+    const registryProfile = {
+      ...localProfile,
+      id: "registry-profile",
+      capabilities: ["embedding"],
+      priority: 10,
+      enabled: true,
+      sovereign: true,
+      maxOutputTokens: 2_048,
+      revision: "v1",
+      distance: "cosine",
+      inputModalities: ["TEXT"],
+    };
+
+    await expect(embedTexts(registryProfile, DataClassification.INTERNAL, ["alpha"])).resolves.toHaveLength(1);
+  });
+
   it("posts OpenAI-compatible requests and returns vectors in input order", async () => {
     process.env.TEST_EMBEDDING_API_KEY = "secret-value";
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(responseFor(["alpha", "b"]));

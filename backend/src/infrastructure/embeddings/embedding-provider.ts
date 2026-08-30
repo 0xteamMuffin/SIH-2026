@@ -29,7 +29,7 @@ const embeddingProfileSchema = z.object({
   maxBatchInputs: positiveSafeInteger,
   maxBatchCharacters: positiveSafeInteger,
   maxInputCharacters: positiveSafeInteger,
-}).strict().refine((profile) => profile.maxInputCharacters <= profile.maxBatchCharacters);
+}).passthrough().refine((profile) => profile.maxInputCharacters <= profile.maxBatchCharacters);
 
 const embeddingResponseSchema = z.object({
   data: z.array(z.object({
