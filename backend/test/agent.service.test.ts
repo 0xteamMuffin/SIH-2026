@@ -1,7 +1,7 @@
 import { ApprovalStatus, DataClassification, RunStatus, RunToolCallStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock, getArtifactBoundedMock, invokeModelMock, outboxEventMock, runMessageMock, runToolCallMock, toolApprovalMock, transactionMock } = vi.hoisted(() => ({
+const { artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock, generatePptxMock, generateXlsxMock, getArtifactBoundedMock, invokeModelMock, outboxEventMock, renderPdfPagesMock, runCodeMock, runMessageMock, runToolCallMock, toolApprovalMock, transactionMock } = vi.hoisted(() => ({
   artifactMock: { create: vi.fn(), find: vi.fn() },
   auditMock: vi.fn(),
   agentRunMock: {
@@ -13,9 +13,13 @@ const { artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock
   },
   evidenceMock: { create: vi.fn(), findFirst: vi.fn() },
   extractArtifactMock: vi.fn(),
+  generatePptxMock: vi.fn(),
+  generateXlsxMock: vi.fn(),
   getArtifactBoundedMock: vi.fn(),
   invokeModelMock: vi.fn(),
   outboxEventMock: { create: vi.fn() },
+  renderPdfPagesMock: vi.fn(),
+  runCodeMock: vi.fn(),
   runMessageMock: { create: vi.fn() },
   runToolCallMock: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), count: vi.fn() },
   toolApprovalMock: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
@@ -25,8 +29,12 @@ const { artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock
 vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock, evidence: evidenceMock, outboxEvent: outboxEventMock, runMessage: runMessageMock, runToolCall: runToolCallMock, toolApproval: toolApprovalMock, $transaction: transactionMock } }));
 vi.mock("../src/lib/audit.js", () => ({ audit: auditMock }));
 vi.mock("../src/infrastructure/models/model-orchestrator.js", () => ({ invokeModelWithFallbacks: invokeModelMock }));
+vi.mock("../src/infrastructure/pdf-renderer/pdf-renderer-client.js", () => ({ renderPdfPages: renderPdfPagesMock }));
+vi.mock("../src/infrastructure/sandbox/sandbox-client.js", () => ({ runCode: runCodeMock }));
 vi.mock("../src/modules/artifacts/artifacts.service.js", () => ({ createArtifact: artifactMock.create, findArtifact: artifactMock.find, getArtifactBounded: getArtifactBoundedMock }));
 vi.mock("../src/modules/artifacts/artifact-extraction.service.js", () => ({ extractArtifact: extractArtifactMock }));
+vi.mock("../src/modules/deliverables/pptx-generator.js", () => ({ generatePptx: generatePptxMock, PPTX_MIME_TYPE: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }));
+vi.mock("../src/modules/deliverables/xlsx-generator.js", () => ({ generateXlsx: generateXlsxMock, XLSX_MIME_TYPE: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
 
 import { cancelRun, createRun, executeRunTool, failRun, getRun, processRun } from "../src/modules/agent/agent.service.js";
 
@@ -169,7 +177,7 @@ describe("agent run access", () => {
     expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({
       classification: DataClassification.INTERNAL,
       prompt: expect.stringContaining("OCR: valve V-101 is open"),
-      image: { mimeType: "image/png", bytes: imageBytes },
+      images: [{ mimeType: "image/png", bytes: imageBytes }],
     }));
     const persistedCalls = JSON.stringify({ messages: runMessageMock.create.mock.calls, toolCreates: runToolCallMock.create.mock.calls, toolUpdates: runToolCallMock.update.mock.calls });
     expect(persistedCalls).not.toContain(imageBytes.toString("base64"));
@@ -178,7 +186,7 @@ describe("agent run access", () => {
     expect(persistedCalls).toContain('"mode":"original-image"');
   });
 
-  it("uses extraction text for PDFs and records that rendered pages are unavailable", async () => {
+  it("uses extraction text and bounded rendered pages for PDFs", async () => {
     const run = {
       id: "run-pdf",
       workspaceId: "workspace-1",
@@ -198,6 +206,18 @@ describe("agent run access", () => {
     agentRunMock.updateMany.mockResolvedValue({ count: 1 });
     artifactMock.find.mockResolvedValue(source);
     extractArtifactMock.mockResolvedValue({ text: "Extracted PDF text", metadata: { sourceMimeType: "application/pdf" } });
+    const pdfBytes = Buffer.from("%PDF-test");
+    const pageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    getArtifactBoundedMock.mockResolvedValue(pdfBytes);
+    renderPdfPagesMock.mockResolvedValue({
+      pages: [{ pageNumber: 1, width: 100, height: 200, sizeBytes: pageBytes.byteLength, bytes: pageBytes }],
+      sourcePageCount: 1,
+      selectionPolicy: "all-within-limit",
+      renderer: "test-renderer",
+      rendererVersion: "1",
+      dpi: 120,
+      totalBytes: pageBytes.byteLength,
+    });
     runToolCallMock.findUnique.mockResolvedValue(null);
     runToolCallMock.create.mockResolvedValue({});
     runToolCallMock.update.mockResolvedValue({});
@@ -208,11 +228,12 @@ describe("agent run access", () => {
 
     await processRun("run-pdf");
 
-    expect(getArtifactBoundedMock).not.toHaveBeenCalled();
-    expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({ image: undefined, prompt: expect.stringContaining("PDF page rendering is not implemented") }));
+    expect(getArtifactBoundedMock).toHaveBeenCalledWith(source.objectKey, expect.any(Number), expect.any(AbortSignal));
+    expect(renderPdfPagesMock).toHaveBeenCalledWith(pdfBytes, expect.any(AbortSignal));
+    expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({ images: [{ mimeType: "image/png", bytes: pageBytes }], prompt: expect.stringContaining("Rendered PDF pages supplied in order: 1 of 1") }));
     const persistedCalls = JSON.stringify(runMessageMock.create.mock.calls);
-    expect(persistedCalls).toContain('"mode":"extraction-text-only"');
-    expect(persistedCalls).toContain('"renderedPages":[]');
+    expect(persistedCalls).toContain('"mode":"rendered-pdf-pages"');
+    expect(persistedCalls).toContain('"pageNumber":1');
   });
 
   it("does not overwrite a cancelled run after worker failure", async () => {
@@ -331,15 +352,16 @@ describe("agent run access", () => {
   });
 
   it("executes an approved waiting tool and returns a rejected tool as an observation", async () => {
-    const waitingCall = { id: "tool-call-1", modelToolCallId: "model-call-1", status: RunToolCallStatus.WAITING_APPROVAL };
+    const persistedInput = { language: "javascript", code: "console.log('persisted')" };
+    const waitingCall = { id: "tool-call-1", modelToolCallId: "model-call-1", status: RunToolCallStatus.WAITING_APPROVAL, input: persistedInput };
     runToolCallMock.findUnique.mockResolvedValue(waitingCall);
     runToolCallMock.updateMany.mockResolvedValue({ count: 1 });
     runToolCallMock.update.mockResolvedValue({});
     toolApprovalMock.findUnique.mockResolvedValue({ id: "approval-1", status: ApprovalStatus.APPROVED });
     const approvedWork = vi.fn().mockResolvedValue({ ok: true, summary: "executed", stdout: "2", stderr: "", exitCode: 0 });
 
-    await expect(executeRunTool("run-1", "sandbox.execute", { language: "javascript", code: "1 + 1" }, approvedWork)).resolves.toMatchObject({ ok: true });
-    expect(approvedWork).toHaveBeenCalledOnce();
+    await expect(executeRunTool("run-1", "sandbox.execute", persistedInput, approvedWork)).resolves.toMatchObject({ ok: true });
+    expect(approvedWork).toHaveBeenCalledWith(persistedInput);
 
     vi.clearAllMocks();
     runToolCallMock.findUnique.mockResolvedValue(waitingCall);
@@ -349,6 +371,158 @@ describe("agent run access", () => {
 
     await expect(executeRunTool("run-1", "sandbox.execute", { language: "javascript", code: "1 + 1" }, rejectedWork)).resolves.toMatchObject({ ok: false, errorCode: "TOOL_APPROVAL_REJECTED" });
     expect(rejectedWork).not.toHaveBeenCalled();
+  });
+
+  it("persists validated generated code before requesting exact sandbox approval", async () => {
+    const run = {
+      id: "run-code",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Write Python code that prints one",
+      taskCapability: "code",
+      modelProfile: "local-code",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.CONFIDENTIAL,
+      sourceArtifactId: null,
+      status: RunStatus.PENDING,
+    };
+    const selectedProfile = {
+      id: "local-code",
+      providerId: "local-runtime",
+      location: "local",
+      baseUrl: "http://localhost:11434/v1",
+      modelId: "qwen2.5-coder:7b",
+      capabilities: ["code"],
+      priority: 1000,
+      enabled: true,
+      sovereign: true,
+      maxOutputTokens: 2048,
+    };
+    const generated = { language: "python", code: "print(1)", explanation: "Prints one." };
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    runToolCallMock.findUnique.mockResolvedValue(null);
+    runToolCallMock.create.mockResolvedValue({ id: "20000000-0000-4000-8000-000000000001" });
+    runToolCallMock.update.mockResolvedValue({});
+    runMessageMock.create.mockResolvedValue({});
+    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000001" });
+    artifactMock.create.mockResolvedValue({ id: "30000000-0000-4000-8000-000000000001", sizeBytes: 8 });
+    toolApprovalMock.create.mockResolvedValue({ id: "40000000-0000-4000-8000-000000000001" });
+    invokeModelMock
+      .mockResolvedValueOnce({ profile: selectedProfile, response: { text: "```python\nprint(1)\n```" } })
+      .mockResolvedValueOnce({ profile: selectedProfile, response: { text: JSON.stringify(generated) } });
+
+    await expect(processRun(run.id)).resolves.toBeUndefined();
+
+    expect(invokeModelMock).toHaveBeenCalledTimes(2);
+    expect(invokeModelMock.mock.calls[1][0].prompt).toContain("Repair it once");
+    expect(artifactMock.create).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "CODE_OUTPUT",
+      classification: DataClassification.CONFIDENTIAL,
+      bytes: Buffer.from(generated.code),
+    }));
+    expect(toolApprovalMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      toolName: "sandbox.execute",
+      toolInput: { language: generated.language, code: generated.code },
+    }) });
+    expect(runCodeMock).not.toHaveBeenCalled();
+    const codeArtifactCall = artifactMock.create.mock.invocationCallOrder[0];
+    const approvalCall = toolApprovalMock.create.mock.invocationCallOrder[0];
+    expect(codeArtifactCall).toBeLessThan(approvalCall);
+  });
+
+  it("resumes with the persisted approved code and fails a non-zero sandbox result", async () => {
+    const generated = { language: "javascript", code: "process.exit(7)", explanation: "Exercises failure handling." };
+    const run = {
+      id: "run-code-resume",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Write JavaScript failure handling code",
+      taskCapability: "code",
+      modelProfile: "local-code",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.INTERNAL,
+      sourceArtifactId: null,
+      status: RunStatus.PENDING,
+      state: { version: 1, phase: "ACTION", turn: 3, phaseStarted: true },
+      maxTurns: 4,
+      maxToolCalls: 5,
+      deadlineAt: new Date(Date.now() + 60_000),
+    };
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    runToolCallMock.findUnique
+      .mockResolvedValueOnce({ status: RunToolCallStatus.COMPLETED, output: { ok: true, summary: "generated", data: { characters: generated.code.length, analysis: generated.explanation, generatedCode: generated, modelProfile: "local-code" } } })
+      .mockResolvedValueOnce({ status: RunToolCallStatus.COMPLETED, output: { ok: true, summary: "persisted", data: { artifactId: "30000000-0000-4000-8000-000000000001" } } })
+      .mockResolvedValueOnce({ id: "20000000-0000-4000-8000-000000000001", modelToolCallId: "sandbox-call", status: RunToolCallStatus.WAITING_APPROVAL, input: { language: generated.language, code: generated.code } });
+    runToolCallMock.updateMany.mockResolvedValue({ count: 1 });
+    runToolCallMock.update.mockResolvedValue({});
+    toolApprovalMock.findUnique.mockResolvedValue({ status: ApprovalStatus.APPROVED });
+    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000001" });
+    runMessageMock.create.mockResolvedValue({});
+    runCodeMock.mockResolvedValue({ stdout: "", stderr: "failed", exitCode: 7 });
+
+    await expect(processRun(run.id)).rejects.toMatchObject({ code: "SANDBOX_NON_ZERO_EXIT" });
+
+    expect(invokeModelMock).not.toHaveBeenCalled();
+    expect(artifactMock.create).not.toHaveBeenCalled();
+    expect(runCodeMock).toHaveBeenCalledWith(generated.code, generated.language, expect.any(AbortSignal));
+    expect(runToolCallMock.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: RunToolCallStatus.FAILED,
+        output: expect.objectContaining({ ok: false, errorCode: "SANDBOX_NON_ZERO_EXIT" }),
+      }),
+    }));
+  });
+
+  it("selects PPTX from task wording and persists a classified cited artifact", async () => {
+    const sourceId = "10000000-0000-4000-8000-000000000001";
+    const sourceEvidenceId = "20000000-0000-4000-8000-000000000001";
+    const run = {
+      id: "run-pptx",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Create a PowerPoint presentation from this report",
+      taskCapability: "document",
+      modelProfile: "local-general",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.CONFIDENTIAL,
+      sourceArtifactId: sourceId,
+      status: RunStatus.PENDING,
+    };
+    const source = { id: sourceId, workspaceId: "workspace-1", filename: "report.txt", mimeType: "text/plain", detectedMimeType: "text/plain", objectKey: "workspace-1/report.txt", sizeBytes: 20n };
+    const selectedProfile = { id: "local-general", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["general", "document"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    artifactMock.find.mockResolvedValue(source);
+    extractArtifactMock.mockResolvedValue({ text: "Valve V-101 requires inspection.", metadata: {} });
+    runToolCallMock.findUnique.mockResolvedValue(null);
+    runToolCallMock.create.mockResolvedValue({});
+    runToolCallMock.update.mockResolvedValue({});
+    runMessageMock.create.mockResolvedValue({});
+    evidenceMock.create
+      .mockResolvedValueOnce({ id: sourceEvidenceId })
+      .mockResolvedValueOnce({ id: "30000000-0000-4000-8000-000000000001" });
+    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Inspect valve V-101." } });
+    generatePptxMock.mockResolvedValue(Buffer.from("pptx"));
+    artifactMock.create.mockResolvedValue({ id: "40000000-0000-4000-8000-000000000001", sizeBytes: 4 });
+
+    await processRun(run.id);
+
+    expect(generatePptxMock).toHaveBeenCalledWith(expect.objectContaining({
+      citations: [expect.objectContaining({ source: `artifact:${sourceId}` })],
+      sections: [expect.objectContaining({ findings: [expect.objectContaining({ citationIds: ["S1"] })] })],
+    }));
+    expect(generateXlsxMock).not.toHaveBeenCalled();
+    expect(artifactMock.create).toHaveBeenCalledWith(expect.objectContaining({
+      filename: "presentation-run-pptx.pptx",
+      mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      classification: DataClassification.CONFIDENTIAL,
+      idempotencyKey: "run-run-pptx-pptx",
+    }));
   });
 
   it("enforces the snapshotted tool-call limit before creating another call", async () => {

@@ -71,11 +71,11 @@ describe("model fallback orchestration", () => {
       classification: DataClassification.CONFIDENTIAL,
       system: "system",
       prompt: "prompt",
-      image,
+      images: [image],
     });
 
     expect(askModelMock).toHaveBeenCalledOnce();
-    expect(askModelMock).toHaveBeenCalledWith(local, DataClassification.CONFIDENTIAL, "system", "prompt", undefined, image);
+    expect(askModelMock).toHaveBeenCalledWith(local, DataClassification.CONFIDENTIAL, "system", "prompt", undefined, [image]);
     expect(modelInvocationMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ profileId: "local", attempt: 1 }) });
     const telemetryCalls = JSON.stringify({ creates: modelInvocationMock.create.mock.calls, updates: modelInvocationMock.update.mock.calls });
     expect(telemetryCalls).not.toContain('"image"');

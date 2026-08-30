@@ -25,6 +25,14 @@ x-backend-env: &backend-env
   QDRANT_API_KEY: ${QDRANT_API_KEY:-local-development-qdrant-key-change-me}
   SANDBOX_RUNNER_URL: http://sandbox-runner:4100
   SANDBOX_API_TOKEN: ${SANDBOX_API_TOKEN:-local-development-sandbox-token-change-me}
+  PDF_RENDERER_URL: http://pdf-renderer:4200
+  PDF_RENDERER_API_TOKEN: ${PDF_RENDERER_API_TOKEN:-local-development-pdf-renderer-token-change-me}
+  PDF_RENDER_TIMEOUT_MS: ${PDF_RENDER_TIMEOUT_MS:-30000}
+  PDF_RENDER_MAX_SOURCE_BYTES: ${PDF_RENDER_MAX_SOURCE_BYTES:-26214400}
+  PDF_RENDER_MAX_PAGES: ${PDF_RENDER_MAX_PAGES:-3}
+  PDF_RENDER_DPI: ${PDF_RENDER_DPI:-144}
+  PDF_RENDER_MAX_PIXELS_PER_PAGE: ${PDF_RENDER_MAX_PIXELS_PER_PAGE:-4000000}
+  PDF_RENDER_MAX_TOTAL_BYTES: ${PDF_RENDER_MAX_TOTAL_BYTES:-10485760}
   AMQP_URL: ${AMQP_URL}
   APP_MODE: ${APP_MODE}
   MODEL_CONFIG_PATH: /app/config/models.json
@@ -172,6 +180,33 @@ services:
       timeout: 5s
       retries: 5
 
+  pdf-renderer:
+    build: ./backend/pdf-renderer
+    restart: unless-stopped
+    environment:
+      PDF_RENDERER_API_TOKEN: ${PDF_RENDERER_API_TOKEN:-local-development-pdf-renderer-token-change-me}
+      PDF_RENDERER_CONCURRENCY: ${PDF_RENDERER_CONCURRENCY:-1}
+      PDF_RENDER_TIMEOUT_MS: ${PDF_RENDER_TIMEOUT_MS:-30000}
+      PDF_RENDER_MAX_SOURCE_BYTES: ${PDF_RENDER_MAX_SOURCE_BYTES:-26214400}
+      PDF_RENDER_MAX_PAGES: ${PDF_RENDER_MAX_PAGES:-3}
+      PDF_RENDER_MAX_DOCUMENT_PAGES: ${PDF_RENDER_MAX_DOCUMENT_PAGES:-1000}
+      PDF_RENDER_DPI: ${PDF_RENDER_DPI:-144}
+      PDF_RENDER_MAX_PIXELS_PER_PAGE: ${PDF_RENDER_MAX_PIXELS_PER_PAGE:-4000000}
+      PDF_RENDER_MAX_TOTAL_BYTES: ${PDF_RENDER_MAX_TOTAL_BYTES:-10485760}
+    networks: [internal]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=16m"]
+    pids_limit: 64
+    mem_limit: 384m
+    cpus: 1
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4200/ready').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
     depends_on:
@@ -197,6 +232,7 @@ services:
       qdrant: { condition: service_started }
       rabbitmq: { condition: service_healthy }
       sandbox-runner: { condition: service_healthy }
+      pdf-renderer: { condition: service_healthy }
     environment: *backend-env
     extra_hosts: ["host.docker.internal:host-gateway"]
     # Development inference adapters are isolated to the execution worker.

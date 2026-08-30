@@ -12,7 +12,15 @@ Only these settings control model infrastructure:
 | `ALLOW_REMOTE_INFERENCE` | Enables profiles marked `remote`. Must be `false` in sovereign mode. |
 | `REMOTE_MODEL_API_KEY` | Credential used by the example remote provider. Additional providers may reference a different environment variable. |
 | `MODEL_REQUEST_TIMEOUT_MS` | Maximum duration of one model request. |
-| `VISION_MAX_IMAGE_BYTES` | Maximum original-image payload accepted for one vision request. Defaults to 10 MiB and cannot exceed the 25 MiB upload limit. |
+| `VISION_MAX_IMAGE_BYTES` | Maximum combined image payload accepted for one vision request. Defaults to 10 MiB and cannot exceed the 25 MiB upload limit. |
+| `PDF_RENDERER_URL`, `PDF_RENDERER_API_TOKEN` | Internal authenticated PDF renderer endpoint and shared credential. |
+| `PDF_RENDER_TIMEOUT_MS` | End-to-end render deadline; cancellation also terminates the sidecar worker thread. |
+| `PDF_RENDER_MAX_SOURCE_BYTES` | Maximum PDF bytes accepted by the adapter and sidecar. |
+| `PDF_RENDER_MAX_PAGES`, `PDF_RENDER_DPI` | Maximum selected pages and requested render resolution. |
+| `PDF_RENDER_MAX_DOCUMENT_PAGES` | Sidecar-only ceiling for the source document's page count. |
+| `PDF_RENDER_MAX_PIXELS_PER_PAGE` | Per-page decoded pixel ceiling; large pages are scaled down. |
+| `PDF_RENDER_MAX_TOTAL_BYTES` | Combined PNG response ceiling; cannot exceed `VISION_MAX_IMAGE_BYTES`. |
+| `PDF_RENDERER_CONCURRENCY` | Sidecar-only concurrent render-worker limit; excess work fails fast for queue retry. |
 
 Database, storage, authentication, and sandbox variables remain separate because they configure different subsystems.
 

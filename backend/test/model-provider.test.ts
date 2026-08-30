@@ -61,7 +61,7 @@ describe("model provider policy", () => {
     }), { status: 200 }));
     const image = { mimeType: "image/png" as const, bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]) };
 
-    await askModel(localVisionProfile, DataClassification.INTERNAL, "system", "OCR text", undefined, image);
+    await askModel(localVisionProfile, DataClassification.INTERNAL, "system", "OCR text", undefined, [image]);
 
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body.messages[1].content[0]).toEqual({ type: "text", text: "OCR text" });
@@ -73,7 +73,7 @@ describe("model provider policy", () => {
   it("rejects TIFF explicitly before contacting the provider", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
-    await expect(askModel(localVisionProfile, DataClassification.INTERNAL, "system", "OCR text", undefined, { mimeType: "image/tiff", bytes: Buffer.from([1]) }))
+    await expect(askModel(localVisionProfile, DataClassification.INTERNAL, "system", "OCR text", undefined, [{ mimeType: "image/tiff", bytes: Buffer.from([1]) }]))
       .rejects.toMatchObject({ status: 415, code: "VISION_PROVIDER_MIME_UNSUPPORTED" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -81,8 +81,29 @@ describe("model provider policy", () => {
   it("rejects images above the configured byte limit before contacting the provider", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
 
-    await expect(askModel(localVisionProfile, DataClassification.INTERNAL, "system", "OCR text", undefined, { mimeType: "image/webp", bytes: Buffer.alloc(10 * 1024 * 1024 + 1) }))
+    await expect(askModel(localVisionProfile, DataClassification.INTERNAL, "system", "OCR text", undefined, [{ mimeType: "image/webp", bytes: Buffer.alloc(10 * 1024 * 1024 + 1) }]))
       .rejects.toMatchObject({ status: 413, code: "VISION_IMAGE_TOO_LARGE" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends multiple images after the deterministic extraction text", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: "Observed pages." } }] }), { status: 200 }));
+    const images = [Buffer.from("page-1"), Buffer.from("page-2")].map((bytes) => ({ mimeType: "image/png" as const, bytes }));
+
+    await askModel(localVisionProfile, DataClassification.INTERNAL, "system", "Extracted PDF text", undefined, images);
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.messages[1].content).toHaveLength(3);
+    expect(body.messages[1].content[0]).toEqual({ type: "text", text: "Extracted PDF text" });
+    expect(body.messages[1].content.slice(1).every((part: { type: string }) => part.type === "image_url")).toBe(true);
+  });
+
+  it("rejects images whose combined bytes exceed the request limit", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const images = [Buffer.alloc(6 * 1024 * 1024), Buffer.alloc(6 * 1024 * 1024)].map((bytes) => ({ mimeType: "image/png" as const, bytes }));
+
+    await expect(askModel(localVisionProfile, DataClassification.INTERNAL, "system", "text", undefined, images))
+      .rejects.toMatchObject({ status: 413, code: "VISION_IMAGES_TOO_LARGE" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

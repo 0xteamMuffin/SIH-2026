@@ -80,7 +80,7 @@ Status: pending
 - [x] Integrate local UTF-8 and internal Docling extraction for PDF, image, DOCX, PPTX, XLSX, CSV, Markdown, and text.
 - [x] Run OCR for PDF/image inputs and preserve Docling's layout-aware Markdown structure.
 - [ ] Persist granular page, table, image, slide, and sheet location metadata for citation assembly.
-- [ ] Render and select bounded PDF pages for vision inference; current PDF vision is explicitly extraction-text-only.
+- [x] Render and deterministically select bounded PDF pages for vision inference through the isolated internal renderer.
 - [x] Store canonical extracted content and checksums in MinIO with retry-safe lifecycle metadata.
 - [x] Reconcile expired artifact-deletion claims and safely repeat physical object cleanup.
 

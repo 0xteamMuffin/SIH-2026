@@ -8,14 +8,18 @@ import { logger } from "../../lib/logger.js";
 import { mostRestrictiveClassification } from "../../lib/data-classification.js";
 import { invokeModelWithFallbacks } from "../../infrastructure/models/model-orchestrator.js";
 import { visionImageMimeTypes, type ModelImageInput, type VisionImageMimeType } from "../../infrastructure/models/model-provider.js";
+import { renderPdfPages } from "../../infrastructure/pdf-renderer/pdf-renderer-client.js";
 import { eligibleRoutingDecision, routingDecisionForPersistedRun, selectModel } from "../../infrastructure/models/model-router.js";
 import { runCode } from "../../infrastructure/sandbox/sandbox-client.js";
 import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_REQUESTED_TOPIC } from "../../infrastructure/queue/agent-run-message.js";
 import { createArtifact, findArtifact, getArtifactBounded } from "../artifacts/artifacts.service.js";
 import { extractArtifact } from "../artifacts/artifact-extraction.service.js";
 import { approvalNoteDocx } from "./approval-note.js";
-import { modelMessages } from "./agent-prompts.js";
-import type { EvidenceItem, ToolResult } from "./agent.types.js";
+import { codeRepairMessages, modelMessages } from "./agent-prompts.js";
+import { parseGeneratedCode, sandboxToolResult, type EvidenceItem, type GeneratedCode, type ToolResult } from "./agent.types.js";
+import { presentationInput, selectDeliverableFormat, spreadsheetInput } from "./agent-deliverables.js";
+import { generatePptx, PPTX_MIME_TYPE } from "../deliverables/pptx-generator.js";
+import { generateXlsx, XLSX_MIME_TYPE } from "../deliverables/xlsx-generator.js";
 import type { AuthUser } from "../../middleware/auth.js";
 import { isAgentToolName, registeredTool, toolRequiresApproval, validateToolInput, validateToolOutput, type AgentToolName } from "./agent-tool-registry.js";
 import { beginTurn, nextPhase, progressEvent, runtimeState, type AgentRuntimeState } from "./agent-runtime.js";
@@ -23,17 +27,21 @@ import { pauseForToolApproval, RunWaitingForApproval } from "./agent-approval.se
 
 const MAX_SOURCE_CHARS = 12_000;
 const EXTRACTION_VERSION = "canonical-v1";
-const PDF_VISION_LIMITATION = "PDF page rendering is not implemented. Only deterministic extraction text was supplied; do not claim visual inspection of PDF pages.";
 const toJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 async function appendMessage(runId: string, turn: number, role: string, content: object) { await prisma.runMessage.create({ data: { runId, turn, role, content: toJson(content) } }); }
 type ToolExecutionOptions = { workspaceId: string; leaseId: string; maxToolCalls: number };
-export async function executeRunTool(runId: string, name: string, input: object, work: () => Promise<ToolResult>, signal?: AbortSignal, options?: ToolExecutionOptions) {
+export async function executeRunTool(runId: string, name: string, input: object, work: (persistedInput: object) => Promise<ToolResult>, signal?: AbortSignal, options?: ToolExecutionOptions) {
   const validatedInput = isAgentToolName(name) ? validateToolInput(name, input) : input;
   const definition = isAgentToolName(name) ? registeredTool(name) : undefined;
   const riskLevel = definition?.risk ?? ToolRiskLevel.LOW;
   const idempotencyKey = crypto.createHash("sha256").update(`${name}:${JSON.stringify(validatedInput)}`).digest("hex");
   const existing = await prisma.runToolCall.findUnique({ where: { runId_idempotencyKey: { runId, idempotencyKey } } });
-  if (existing?.status === RunToolCallStatus.COMPLETED && existing.output) return existing.output as unknown as ToolResult;
+  if (existing?.status === RunToolCallStatus.COMPLETED && existing.output) {
+    return (isAgentToolName(name) ? validateToolOutput(name, existing.output) : existing.output) as ToolResult;
+  }
+  let persistedInput = existing
+    ? (isAgentToolName(name) ? validateToolInput(name, existing.input) as object : existing.input as object)
+    : validatedInput as object;
   if (existing?.status === RunToolCallStatus.WAITING_APPROVAL) {
     const approval = await prisma.toolApproval.findUnique({ where: { toolCallId: existing.id } });
     if (!approval || approval.status === ApprovalStatus.PENDING) throw new RunWaitingForApproval(approval?.id ?? "unknown");
@@ -48,7 +56,9 @@ export async function executeRunTool(runId: string, name: string, input: object,
     const restarted = await prisma.runToolCall.updateMany({ where: { runId, modelToolCallId, status: { in: [RunToolCallStatus.PENDING, RunToolCallStatus.RUNNING, RunToolCallStatus.FAILED, RunToolCallStatus.WAITING_APPROVAL] } }, data: { status: RunToolCallStatus.RUNNING, startedAt: new Date(), completedAt: null } });
     if (restarted.count === 0) {
       const completed = await prisma.runToolCall.findUnique({ where: { runId_idempotencyKey: { runId, idempotencyKey } } });
-      if (completed?.status === RunToolCallStatus.COMPLETED && completed.output) return completed.output as unknown as ToolResult;
+      if (completed?.status === RunToolCallStatus.COMPLETED && completed.output) {
+        return (isAgentToolName(name) ? validateToolOutput(name, completed.output) : completed.output) as ToolResult;
+      }
       throw new Error(`Completed tool result '${name}' is unavailable`);
     }
   } else {
@@ -65,7 +75,7 @@ export async function executeRunTool(runId: string, name: string, input: object,
   }
   try {
     signal?.throwIfAborted();
-    const rawResult = await work();
+    const rawResult = await work(persistedInput);
     const result = (isAgentToolName(name) ? validateToolOutput(name, rawResult) : rawResult) as ToolResult;
     await prisma.runToolCall.update({ where: { runId_modelToolCallId: { runId, modelToolCallId } }, data: { status: result.ok ? RunToolCallStatus.COMPLETED : RunToolCallStatus.FAILED, output: toJson(result), completedAt: new Date() } });
     return result;
@@ -198,7 +208,7 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
     }
     const evidence: EvidenceItem[] = [];
     let sourceText: string | undefined;
-    let modelImage: ModelImageInput | undefined;
+    let modelImages: ModelImageInput[] = [];
     let visionInput: Record<string, unknown> | undefined;
     let sourceLimitation: string | undefined;
     const sourcePhase = await startPhase("SOURCE", sourceArtifactId ? "Reading source artifact" : "No source artifact to read");
@@ -222,26 +232,62 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
           throw new AppError(413, `Image must contain between 1 and ${env.VISION_MAX_IMAGE_BYTES} bytes`, "VISION_IMAGE_TOO_LARGE");
         }
         const bytes = await getArtifactBounded(source.objectKey, env.VISION_MAX_IMAGE_BYTES, signal);
-        modelImage = { mimeType: sourceMimeType as VisionImageMimeType, bytes };
+        modelImages = [{ mimeType: sourceMimeType as VisionImageMimeType, bytes }];
         visionInput = { mode: "original-image", sourceMimeType, sizeBytes: bytes.byteLength };
-      } else if (sourceMimeType === "application/pdf") {
-        sourceLimitation = PDF_VISION_LIMITATION;
-        visionInput = { mode: "extraction-text-only", sourceMimeType, renderedPages: [], limitation: PDF_VISION_LIMITATION };
+      } else if (decision.capability === "vision" && sourceMimeType === "application/pdf") {
+        const sizeBytes = Number(extractedSource?.sizeBytes ?? source.sizeBytes);
+        if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > env.PDF_RENDER_MAX_SOURCE_BYTES) {
+          throw new AppError(413, `PDF must contain between 1 and ${env.PDF_RENDER_MAX_SOURCE_BYTES} bytes`, "PDF_SOURCE_TOO_LARGE");
+        }
+        const pdfBytes = await getArtifactBounded(source.objectKey, env.PDF_RENDER_MAX_SOURCE_BYTES, signal);
+        const rendered = await renderPdfPages(pdfBytes, signal);
+        modelImages = rendered.pages.map((page) => ({ mimeType: "image/png", bytes: page.bytes }));
+        sourceLimitation = `Rendered PDF pages supplied in order: ${rendered.pages.map((page) => page.pageNumber).join(", ")} of ${rendered.sourcePageCount}. Do not claim visual inspection of pages that were not supplied.`;
+        visionInput = {
+          mode: "rendered-pdf-pages",
+          sourceMimeType,
+          sourcePageCount: rendered.sourcePageCount,
+          selectionPolicy: rendered.selectionPolicy,
+          renderer: rendered.renderer,
+          rendererVersion: rendered.rendererVersion,
+          dpi: rendered.dpi,
+          totalBytes: rendered.totalBytes,
+          renderedPages: rendered.pages.map(({ pageNumber, width, height, sizeBytes: renderedSizeBytes }) => ({ pageNumber, width, height, sizeBytes: renderedSizeBytes })),
+        };
       }
     }
     if (sourcePhase) await finishPhase();
     let analysis = "No model analysis was required.";
+    let generatedCode: GeneratedCode | undefined;
     let selectedProfile = decision.profile;
     const messages = modelMessages(run.task, decision.capability, sourceText, sourceLimitation);
     const analyzePhase = await startPhase("ANALYZE", "Producing bounded model output");
     const analyzed = await executeRunTool(run.id, "model.analyze", { model: decision.profile.id, capability: decision.capability }, async () => {
-      const selected = await invokeModelWithFallbacks({ runId: run.id, decision, classification: run.dataClassification, ...messages, image: modelImage, signal });
+      const selected = await invokeModelWithFallbacks({ runId: run.id, decision, classification: run.dataClassification, ...messages, images: modelImages, signal });
       selectedProfile = selected.profile;
+      if (decision.capability === "code") {
+        try {
+          generatedCode = parseGeneratedCode(selected.response.text);
+        } catch {
+          const repaired = await invokeModelWithFallbacks({
+            runId: run.id,
+            decision: { ...decision, profile: selectedProfile },
+            classification: run.dataClassification,
+            ...codeRepairMessages(run.task, selected.response.text, sourceText, sourceLimitation),
+            signal,
+          });
+          selectedProfile = repaired.profile;
+          generatedCode = parseGeneratedCode(repaired.response.text);
+        }
+        analysis = generatedCode.explanation;
+        return { ok: true, summary: "Generated code validated", data: { characters: generatedCode.code.length, analysis, generatedCode, modelProfile: selectedProfile.id } };
+      }
       analysis = selected.response.text.trim() || "The model returned no analysis.";
       return { ok: true, summary: "Model analysis completed", data: { characters: analysis.length, analysis, modelProfile: selectedProfile.id } };
     }, signal, toolOptions);
     if (!analyzed.ok) throw new Error(analyzed.summary);
     if (typeof analyzed.data?.analysis === "string") analysis = analyzed.data.analysis;
+    if (decision.capability === "code") generatedCode = parseGeneratedCode(JSON.stringify(analyzed.data?.generatedCode));
     if (typeof analyzed.data?.modelProfile === "string") {
       selectedProfile = [decision.profile, ...decision.fallbacks].find((profile) => profile.id === analyzed.data?.modelProfile) ?? selectedProfile;
     }
@@ -264,10 +310,52 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
     if (visionInput) result.visionInput = visionInput;
     const actionPhase = await startPhase("ACTION", decision.capability === "code" ? "Requesting or executing sandbox action" : "Creating requested deliverable");
     if (decision.capability === "code") {
-      const code = sourceArtifactId ? sourceText ?? "" : "console.log('Sandbox verification complete')";
-      result.sandbox = await executeRunTool(run.id, "sandbox.execute", { language: "javascript", code }, async () => ({ ...(await runCode(code, "javascript", signal)), ok: true, summary: "Sandbox execution completed" }), signal, toolOptions);
+      if (!generatedCode) throw new Error("Validated generated code is unavailable");
+      const persisted = await executeRunTool(run.id, "code.persistOutput", generatedCode, async (persistedToolInput) => {
+        const output = parseGeneratedCode(JSON.stringify(persistedToolInput));
+        signal.throwIfAborted();
+        const extension = output.language === "python" ? "py" : "js";
+        const mimeType = output.language === "python" ? "text/x-python" : "text/javascript";
+        const artifact = await createArtifact({
+          workspaceId: run.workspaceId,
+          userId: run.requestedBy,
+          filename: `generated-code-${run.id}.${extension}`,
+          mimeType,
+          kind: "CODE_OUTPUT",
+          classification: run.dataClassification,
+          bytes: Buffer.from(output.code, "utf8"),
+          idempotencyKey: `run-${run.id}-code-output`,
+        });
+        return { ok: true, summary: "Persisted generated code", data: { artifactId: artifact.id } };
+      }, signal, toolOptions);
+      if (!persisted.ok || typeof persisted.data?.artifactId !== "string") throw new Error(persisted.summary);
+      result.codeArtifactId = persisted.data.artifactId;
+      result.generatedCode = { language: generatedCode.language, explanation: generatedCode.explanation };
+      const sandbox = await executeRunTool(run.id, "sandbox.execute", { language: generatedCode.language, code: generatedCode.code }, async (approvedInput) => {
+        const approved = validateToolInput("sandbox.execute", approvedInput);
+        const execution = await runCode(approved.code, approved.language, signal);
+        return sandboxToolResult(execution);
+      }, signal, toolOptions);
+      result.sandbox = sandbox;
+      if (sandbox.errorCode === "SANDBOX_NON_ZERO_EXIT") throw new AppError(422, sandbox.summary, sandbox.errorCode);
     } else if (sourceArtifactId) {
-      const delivered = await executeRunTool(run.id, "deliverable.createApprovalNote", { format: "docx" }, async () => { const artifact = await createArtifact({ workspaceId: run.workspaceId, userId: run.requestedBy, filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", kind: "GENERATED_DOCX", classification: run.dataClassification, bytes: Buffer.from(await approvalNoteDocx(run.task, evidence)), idempotencyKey: `run-${run.id}-approval-note` }); result.artifact = artifact; return { ok: true, summary: "Generated approval-note DOCX", data: { artifactId: artifact.id } }; }, signal, toolOptions);
+      const sourceEvidence = evidence.filter((item) => item.sourceRef.startsWith("artifact:"));
+      const evidenceIds = sourceEvidence.map((item) => item.id);
+      const format = selectDeliverableFormat(run.task);
+      const toolName = format === "pptx" ? "deliverable.createPresentation" : format === "xlsx" ? "deliverable.createSpreadsheet" : "deliverable.createApprovalNote";
+      const toolInput = format === "docx" ? { format } : { format, evidenceIds };
+      const delivered = await executeRunTool(run.id, toolName, toolInput, async () => {
+        signal.throwIfAborted();
+        const output = format === "pptx"
+          ? { bytes: await generatePptx(presentationInput(run.task, analysis, sourceEvidence)), filename: `presentation-${run.id}.pptx`, mimeType: PPTX_MIME_TYPE, summary: "Generated cited PPTX" }
+          : format === "xlsx"
+            ? { bytes: await generateXlsx(spreadsheetInput(run.task, analysis, sourceEvidence)), filename: `workbook-${run.id}.xlsx`, mimeType: XLSX_MIME_TYPE, summary: "Generated cited XLSX" }
+            : { bytes: Buffer.from(await approvalNoteDocx(run.task, evidence)), filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", summary: "Generated approval-note DOCX" };
+        signal.throwIfAborted();
+        const artifact = await createArtifact({ workspaceId: run.workspaceId, userId: run.requestedBy, filename: output.filename, mimeType: output.mimeType, kind: "GENERATED_DOCX", classification: run.dataClassification, bytes: output.bytes, idempotencyKey: `run-${run.id}-${format}` });
+        result.artifact = artifact;
+        return { ok: true, summary: output.summary, data: { artifactId: artifact.id } };
+      }, signal, toolOptions);
       const artifactId = delivered.data?.artifactId;
       if (typeof artifactId === "string" && !result.artifact) {
         const artifact = await findArtifact(artifactId);

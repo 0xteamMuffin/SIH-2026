@@ -30,24 +30,28 @@ export const visionImageMimeTypes = ["image/png", "image/jpeg", "image/tiff", "i
 export type VisionImageMimeType = typeof visionImageMimeTypes[number];
 export type ModelImageInput = { mimeType: VisionImageMimeType; bytes: Buffer };
 
-export async function askModel(profile: ModelProfile, classification: DataClassification, system: string, prompt: string, signal?: AbortSignal, image?: ModelImageInput): Promise<ModelResponse> {
+export async function askModel(profile: ModelProfile, classification: DataClassification, system: string, prompt: string, signal?: AbortSignal, images: readonly ModelImageInput[] = []): Promise<ModelResponse> {
   if (profile.location === "remote" && !allowsExternalInference(classification)) {
     throw new AppError(422, "External inference is restricted to public or synthetic data", "EXTERNAL_INFERENCE_BLOCKED");
   }
   if (profile.location === "remote" && !env.ALLOW_REMOTE_INFERENCE) throw new AppError(503, "Remote inference is disabled", "REMOTE_INFERENCE_DISABLED");
   const apiKey = profile.apiKeyEnv ? process.env[profile.apiKeyEnv] : undefined;
   if (profile.apiKeyEnv && !apiKey) throw new AppError(503, `Model provider credential '${profile.apiKeyEnv}' is not configured`, "MODEL_PROVIDER_NOT_CONFIGURED");
-  if (image && !profile.capabilities.includes("vision")) throw new AppError(422, `Model profile '${profile.id}' is not vision-capable`, "MODEL_VISION_UNSUPPORTED");
-  if (image && !visionImageMimeTypes.includes(image.mimeType)) throw new AppError(415, `Image MIME type '${image.mimeType}' is not supported`, "VISION_IMAGE_MIME_UNSUPPORTED");
-  if (image?.mimeType === "image/tiff") throw new AppError(415, "TIFF images are accepted as source artifacts but cannot be sent to OpenAI-compatible vision providers without conversion", "VISION_PROVIDER_MIME_UNSUPPORTED");
-  if (image && (image.bytes.byteLength === 0 || image.bytes.byteLength > env.VISION_MAX_IMAGE_BYTES)) {
-    throw new AppError(413, `Image must contain between 1 and ${env.VISION_MAX_IMAGE_BYTES} bytes`, "VISION_IMAGE_TOO_LARGE");
+  if (images.length > 0 && !profile.capabilities.includes("vision")) throw new AppError(422, `Model profile '${profile.id}' is not vision-capable`, "MODEL_VISION_UNSUPPORTED");
+  if (images.length > env.PDF_RENDER_MAX_PAGES) throw new AppError(413, `At most ${env.PDF_RENDER_MAX_PAGES} images may be sent`, "VISION_IMAGE_COUNT_EXCEEDED");
+  let totalImageBytes = 0;
+  for (const image of images) {
+    if (!visionImageMimeTypes.includes(image.mimeType)) throw new AppError(415, `Image MIME type '${image.mimeType}' is not supported`, "VISION_IMAGE_MIME_UNSUPPORTED");
+    if (image.mimeType === "image/tiff") throw new AppError(415, "TIFF images are accepted as source artifacts but cannot be sent to OpenAI-compatible vision providers without conversion", "VISION_PROVIDER_MIME_UNSUPPORTED");
+    if (image.bytes.byteLength === 0 || image.bytes.byteLength > env.VISION_MAX_IMAGE_BYTES) throw new AppError(413, `Image must contain between 1 and ${env.VISION_MAX_IMAGE_BYTES} bytes`, "VISION_IMAGE_TOO_LARGE");
+    totalImageBytes += image.bytes.byteLength;
   }
+  if (totalImageBytes > env.VISION_MAX_IMAGE_BYTES) throw new AppError(413, `Combined images cannot exceed ${env.VISION_MAX_IMAGE_BYTES} bytes`, "VISION_IMAGES_TOO_LARGE");
   const timeoutSignal = AbortSignal.timeout(env.MODEL_REQUEST_TIMEOUT_MS);
   const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
   const startedAt = performance.now();
-  const userContent = image
-    ? [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.bytes.toString("base64")}` } }]
+  const userContent = images.length > 0
+    ? [{ type: "text", text: prompt }, ...images.map((image) => ({ type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.bytes.toString("base64")}` } }))]
     : prompt;
   let response: Response;
   try {

@@ -44,6 +44,14 @@ const schema = z.object({
   QDRANT_API_KEY: z.string().min(16),
   SANDBOX_RUNNER_URL: z.string().url(),
   SANDBOX_API_TOKEN: z.string().min(32),
+  PDF_RENDERER_URL: z.string().url().refine((value) => ["http:", "https:"].includes(new URL(value).protocol), "PDF_RENDERER_URL must use HTTP or HTTPS").transform((value) => value.replace(/\/+$/, "")),
+  PDF_RENDERER_API_TOKEN: z.string().min(32),
+  PDF_RENDER_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
+  PDF_RENDER_MAX_SOURCE_BYTES: z.coerce.number().int().min(1).max(25 * 1024 * 1024).default(25 * 1024 * 1024),
+  PDF_RENDER_MAX_PAGES: z.coerce.number().int().min(1).max(8).default(3),
+  PDF_RENDER_DPI: z.coerce.number().int().min(72).max(200).default(144),
+  PDF_RENDER_MAX_PIXELS_PER_PAGE: z.coerce.number().int().min(100_000).max(16_000_000).default(4_000_000),
+  PDF_RENDER_MAX_TOTAL_BYTES: z.coerce.number().int().min(1).max(25 * 1024 * 1024).default(10 * 1024 * 1024),
   DOCLING_BASE_URL: z.string().url().refine((value) => ["http:", "https:"].includes(new URL(value).protocol), "DOCLING_BASE_URL must use HTTP or HTTPS").transform((value) => value.replace(/\/+$/, "")),
   DOCLING_API_KEY: z.string().min(16),
   DOCLING_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(310_000),
@@ -81,6 +89,9 @@ const schema = z.object({
   }
   if (value.EXTRACTION_STALE_TIMEOUT_MS <= value.DOCLING_REQUEST_TIMEOUT_MS) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "EXTRACTION_STALE_TIMEOUT_MS must be longer than DOCLING_REQUEST_TIMEOUT_MS" });
+  }
+  if (value.PDF_RENDER_MAX_TOTAL_BYTES > value.VISION_MAX_IMAGE_BYTES) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "PDF_RENDER_MAX_TOTAL_BYTES cannot exceed VISION_MAX_IMAGE_BYTES" });
   }
 });
 

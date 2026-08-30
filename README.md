@@ -38,6 +38,7 @@ Compose supplies `local-development-qdrant-key-change-me` only when an older loc
 - MinIO for uploaded and generated files
 - Authenticated Qdrant infrastructure for future local knowledge retrieval
 - Isolated Docker sandbox runner for coding tasks
+- Bounded internal PDF-to-PNG renderer for multimodal document tasks
 - Provider-neutral local-model endpoint configuration for a future internal model server
 
 The default demo creates a local admin account, supports document uploads, runs a bounded agent harness, records every step, and can generate an approval-note DOCX from grounded findings.

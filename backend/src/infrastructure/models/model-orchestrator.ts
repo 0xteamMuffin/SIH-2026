@@ -38,7 +38,7 @@ export async function invokeModelWithFallbacks(input: {
   classification: DataClassification;
   system: string;
   prompt: string;
-  image?: ModelImageInput;
+  images?: readonly ModelImageInput[];
   signal?: AbortSignal;
 }): Promise<{ profile: ModelProfile; response: ModelResponse }> {
   const candidates = [input.decision.profile, ...input.decision.fallbacks]
@@ -59,7 +59,7 @@ export async function invokeModelWithFallbacks(input: {
     const startedAt = performance.now();
     let response: ModelResponse;
     try {
-      response = await askModel(profile, input.classification, input.system, input.prompt, input.signal, input.image);
+      response = await askModel(profile, input.classification, input.system, input.prompt, input.signal, input.images);
     } catch (error) {
       const cancelled = isCancellation(error, input.signal);
       await prisma.modelInvocation.update({
