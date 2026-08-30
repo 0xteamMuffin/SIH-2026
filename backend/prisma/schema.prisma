@@ -49,31 +49,111 @@ enum ModelInvocationStatus {
   CANCELLED
 }
 
+enum KnowledgeVisibility {
+  WORKSPACE_PRIVATE
+  ORGANIZATION_SHARED
+}
+
+enum KnowledgeSourceStatus {
+  ACTIVE
+  ARCHIVED
+  DELETING
+  DELETED
+}
+
+enum KnowledgeIndexStatus {
+  PROVISIONING
+  ACTIVE
+  RETIRING
+  RETIRED
+  DELETING
+  DELETED
+  FAILED
+}
+
+enum KnowledgeSourceIndexStatus {
+  PENDING
+  INDEXING
+  READY
+  STALE
+  REMOVING
+  REMOVED
+  FAILED
+}
+
+enum KnowledgeJobType {
+  INDEX_SOURCE
+  REMOVE_SOURCE
+  REBUILD_INDEX
+  EXECUTE_QUERY
+  RECONCILE_INDEX
+}
+
+enum KnowledgeJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum KnowledgeQueryStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum EmbeddingPurpose {
+  INDEX
+  QUERY
+}
+
+enum EmbeddingInvocationStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum KnowledgeVectorDistance {
+  COSINE
+  EUCLID
+  DOT
+  MANHATTAN
+}
+
 model User {
-  id           String            @id @default(uuid()) @db.Uuid
-  email        String            @unique
-  passwordHash String            @map("password_hash")
-  role         UserRole          @default(OPERATOR)
-  createdAt    DateTime          @default(now()) @map("created_at")
-  workspaces   Workspace[]       @relation("WorkspaceCreator")
-  memberships  WorkspaceMember[]
-  artifacts    Artifact[]
-  runs         AgentRun[]
-  auditEvents  AuditEvent[]
+  id               String            @id @default(uuid()) @db.Uuid
+  email            String            @unique
+  passwordHash     String            @map("password_hash")
+  role             UserRole          @default(OPERATOR)
+  createdAt        DateTime          @default(now()) @map("created_at")
+  workspaces       Workspace[]       @relation("WorkspaceCreator")
+  memberships      WorkspaceMember[]
+  artifacts        Artifact[]
+  runs             AgentRun[]
+  auditEvents      AuditEvent[]
+  knowledgeSources KnowledgeSource[]
+  knowledgeQueries KnowledgeQuery[]
 
   @@map("users")
 }
 
 model Workspace {
-  id          String            @id @default(uuid()) @db.Uuid
-  name        String
-  createdBy   String            @map("created_by") @db.Uuid
-  createdAt   DateTime          @default(now()) @map("created_at")
-  creator     User              @relation("WorkspaceCreator", fields: [createdBy], references: [id])
-  members     WorkspaceMember[]
-  artifacts   Artifact[]
-  runs        AgentRun[]
-  auditEvents AuditEvent[]
+  id               String            @id @default(uuid()) @db.Uuid
+  name             String
+  createdBy        String            @map("created_by") @db.Uuid
+  createdAt        DateTime          @default(now()) @map("created_at")
+  creator          User              @relation("WorkspaceCreator", fields: [createdBy], references: [id])
+  members          WorkspaceMember[]
+  artifacts        Artifact[]
+  runs             AgentRun[]
+  auditEvents      AuditEvent[]
+  knowledgeSources KnowledgeSource[]
+  knowledgeJobs    KnowledgeJob[]
+  knowledgeQueries KnowledgeQuery[]
 
   @@map("workspaces")
 }
@@ -111,6 +191,7 @@ model Artifact {
   workspace           Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   creator             User                     @relation(fields: [createdBy], references: [id])
   evidence            Evidence[]
+  knowledgeSource     KnowledgeSource?
 
   @@index([workspaceId, extractionStatus])
   @@map("artifacts")
@@ -247,4 +328,173 @@ model OutboxEvent {
 
   @@index([publishedAt, availableAt])
   @@map("outbox_events")
+}
+
+model KnowledgeSource {
+  id            String                 @id @default(uuid()) @db.Uuid
+  workspaceId   String                 @map("workspace_id") @db.Uuid
+  artifactId    String                 @unique @map("artifact_id") @db.Uuid
+  createdBy     String                 @map("created_by") @db.Uuid
+  visibility    KnowledgeVisibility    @default(WORKSPACE_PRIVATE)
+  status        KnowledgeSourceStatus  @default(ACTIVE)
+  revision      Int                    @default(1)
+  createdAt     DateTime               @default(now()) @map("created_at")
+  updatedAt     DateTime               @updatedAt @map("updated_at")
+  archivedAt    DateTime?              @map("archived_at")
+  deletedAt     DateTime?              @map("deleted_at")
+  workspace     Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  artifact      Artifact               @relation(fields: [artifactId], references: [id])
+  creator       User                   @relation(fields: [createdBy], references: [id])
+  sourceIndexes KnowledgeSourceIndex[]
+
+  @@index([workspaceId, visibility, status])
+  @@map("knowledge_sources")
+}
+
+model KnowledgeIndex {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  fingerprint          String                  @unique
+  collectionName       String                  @unique @map("collection_name")
+  vectorName           String                  @map("vector_name")
+  profileId            String                  @map("profile_id")
+  providerId           String                  @map("provider_id")
+  modelId              String                  @map("model_id")
+  revision             Int
+  dimensions           Int
+  distance             KnowledgeVectorDistance
+  chunkerVersion       String                  @map("chunker_version")
+  status               KnowledgeIndexStatus    @default(PROVISIONING)
+  createdAt            DateTime                @default(now()) @map("created_at")
+  updatedAt            DateTime                @updatedAt @map("updated_at")
+  activatedAt          DateTime?               @map("activated_at")
+  retiredAt            DateTime?               @map("retired_at")
+  sourceIndexes        KnowledgeSourceIndex[]
+  jobs                 KnowledgeJob[]
+  queries              KnowledgeQuery[]
+  embeddingInvocations EmbeddingInvocation[]
+
+  @@index([status, createdAt])
+  @@map("knowledge_indexes")
+}
+
+model KnowledgeSourceIndex {
+  id                   String                     @id @default(uuid()) @db.Uuid
+  sourceId             String                     @map("source_id") @db.Uuid
+  indexId              String                     @map("index_id") @db.Uuid
+  sourceRevision       Int                        @map("source_revision")
+  indexRevision        Int                        @map("index_revision")
+  status               KnowledgeSourceIndexStatus @default(PENDING)
+  chunkCount           Int                        @default(0) @map("chunk_count")
+  sourceChecksum       String?                    @map("source_checksum")
+  chunkSetChecksum     String?                    @map("chunk_set_checksum")
+  leaseId              String?                    @map("lease_id") @db.Uuid
+  heartbeatAt          DateTime?                  @map("heartbeat_at")
+  leaseExpiresAt       DateTime?                  @map("lease_expires_at")
+  lastError            String?                    @map("last_error")
+  indexedAt            DateTime?                  @map("indexed_at")
+  createdAt            DateTime                   @default(now()) @map("created_at")
+  updatedAt            DateTime                   @updatedAt @map("updated_at")
+  source               KnowledgeSource            @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  index                KnowledgeIndex             @relation(fields: [indexId], references: [id], onDelete: Cascade)
+  jobs                 KnowledgeJob[]
+  embeddingInvocations EmbeddingInvocation[]
+
+  @@unique([sourceId, indexId])
+  @@index([indexId, status])
+  @@index([status, leaseExpiresAt])
+  @@map("knowledge_source_indexes")
+}
+
+model KnowledgeJob {
+  id                   String                @id @default(uuid()) @db.Uuid
+  workspaceId          String?               @map("workspace_id") @db.Uuid
+  indexId              String                @map("index_id") @db.Uuid
+  sourceIndexId        String?               @map("source_index_id") @db.Uuid
+  queryId              String?               @unique @map("query_id") @db.Uuid
+  type                 KnowledgeJobType
+  status               KnowledgeJobStatus    @default(QUEUED)
+  idempotencyKey       String                @unique @map("idempotency_key")
+  attempts             Int                   @default(0)
+  maxAttempts          Int                   @default(3) @map("max_attempts")
+  availableAt          DateTime              @default(now()) @map("available_at")
+  leaseId              String?               @map("lease_id") @db.Uuid
+  heartbeatAt          DateTime?             @map("heartbeat_at")
+  leaseExpiresAt       DateTime?             @map("lease_expires_at")
+  lastError            String?               @map("last_error")
+  startedAt            DateTime?             @map("started_at")
+  completedAt          DateTime?             @map("completed_at")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+  workspace            Workspace?            @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  index                KnowledgeIndex        @relation(fields: [indexId], references: [id], onDelete: Cascade)
+  sourceIndex          KnowledgeSourceIndex? @relation(fields: [sourceIndexId], references: [id], onDelete: Restrict)
+  query                KnowledgeQuery?       @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  embeddingInvocations EmbeddingInvocation[]
+
+  @@index([status, availableAt])
+  @@index([status, leaseExpiresAt])
+  @@index([workspaceId, createdAt])
+  @@index([indexId, createdAt])
+  @@map("knowledge_jobs")
+}
+
+model KnowledgeQuery {
+  id                   String                @id @default(uuid()) @db.Uuid
+  workspaceId          String                @map("workspace_id") @db.Uuid
+  requestedBy          String                @map("requested_by") @db.Uuid
+  indexId              String                @map("index_id") @db.Uuid
+  indexRevision        Int                   @map("index_revision")
+  dataClassification   DataClassification    @default(INTERNAL) @map("data_classification")
+  status               KnowledgeQueryStatus  @default(QUEUED)
+  queryText            String                @map("query_text")
+  topK                 Int                   @default(10) @map("top_k")
+  filters              Json                  @default("{}")
+  result               Json?
+  lastError            String?               @map("last_error")
+  startedAt            DateTime?             @map("started_at")
+  completedAt          DateTime?             @map("completed_at")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+  workspace            Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  requester            User                  @relation(fields: [requestedBy], references: [id])
+  index                KnowledgeIndex        @relation(fields: [indexId], references: [id], onDelete: Cascade)
+  job                  KnowledgeJob?
+  embeddingInvocations EmbeddingInvocation[]
+
+  @@index([workspaceId, createdAt])
+  @@index([status, createdAt])
+  @@map("knowledge_queries")
+}
+
+model EmbeddingInvocation {
+  id              String                    @id @default(uuid()) @db.Uuid
+  jobId           String                    @map("job_id") @db.Uuid
+  indexId         String                    @map("index_id") @db.Uuid
+  sourceIndexId   String?                   @map("source_index_id") @db.Uuid
+  queryId         String?                   @map("query_id") @db.Uuid
+  purpose         EmbeddingPurpose
+  providerId      String                    @map("provider_id")
+  profileId       String                    @map("profile_id")
+  modelId         String                    @map("model_id")
+  batch           Int                       @default(0)
+  attempt         Int                       @default(1)
+  status          EmbeddingInvocationStatus @default(RUNNING)
+  inputCount      Int                       @map("input_count")
+  inputCharacters Int                       @map("input_characters")
+  inputTokens     Int?                      @map("input_tokens")
+  dimensions      Int
+  latencyMs       Int?                      @map("latency_ms")
+  sanitizedError  String?                   @map("sanitized_error")
+  startedAt       DateTime                  @default(now()) @map("started_at")
+  completedAt     DateTime?                 @map("completed_at")
+  job             KnowledgeJob              @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  index           KnowledgeIndex            @relation(fields: [indexId], references: [id], onDelete: Cascade)
+  sourceIndex     KnowledgeSourceIndex?     @relation(fields: [sourceIndexId], references: [id], onDelete: Cascade)
+  query           KnowledgeQuery?           @relation(fields: [queryId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, batch, attempt])
+  @@index([indexId, startedAt])
+  @@index([sourceIndexId, startedAt])
+  @@index([queryId, startedAt])
+  @@map("embedding_invocations")
 }
