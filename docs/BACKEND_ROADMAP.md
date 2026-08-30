@@ -42,11 +42,11 @@ Acceptance gate: at least two task capabilities select different configured mode
 
 ## Phase 2: Durable execution
 
-Status: pending
+Status: in progress
 
-- [ ] Add RabbitMQ with durable exchanges, queues, publisher confirms, and manual acknowledgements.
-- [ ] Move agent processing from the API process into a dedicated worker.
-- [ ] Make enqueueing idempotent and recover database/queue inconsistencies.
+- [x] Add RabbitMQ with durable exchanges, queues, publisher confirms, and manual acknowledgements.
+- [x] Move agent processing from the API process into a dedicated worker.
+- [x] Make enqueueing idempotent and recover database/queue inconsistencies.
 - [ ] Add bounded retries, backoff, timeouts, progress events, and failure reasons.
 - [ ] Implement real cancellation using worker and tool abort signals.
 - [ ] Recover or fail stale runs after worker restarts.
@@ -167,8 +167,8 @@ Acceptance gate: a clean machine can install and run the documented demonstratio
 1. Add a validated model registry with capability-based priorities.
 2. Add provider timeout, normalized responses, and failure tests.
 3. Persist model invocation usage and audit metadata.
-4. Add RabbitMQ infrastructure, transactional outbox, and worker entrypoint.
-5. Move run processing into durable RabbitMQ jobs.
+4. Add cancellation commands and worker abort controllers.
+5. Recover stale runs using leases and heartbeats.
 6. Add cancellation, retries, recovery, and progress events.
 
 The sequence may be adjusted only when a discovered dependency or security defect must be resolved first.
