@@ -1,14 +1,17 @@
 import { DataClassification } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import { askModel } from "../src/infrastructure/models/model-provider.js";
-import type { ModelProfile } from "../src/infrastructure/models/model-router.js";
+import type { ModelProfile } from "../src/infrastructure/models/model-registry.js";
 
 const openRouterProfile: ModelProfile = {
   id: "openrouter-test",
   provider: "openrouter",
   modelId: "test/model",
   capabilities: ["general"],
+  priority: 100,
+  enabled: true,
   sovereign: false,
+  maxOutputTokens: 2_048,
 };
 
 describe("model provider policy", () => {

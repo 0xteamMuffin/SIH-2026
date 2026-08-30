@@ -30,8 +30,8 @@ Acceptance gate: tests, typecheck, build, Prisma validation, and rendered sovere
 
 Status: in progress
 
-- [ ] Replace hard-coded profiles with a validated model registry.
-- [ ] Support multiple OpenRouter and local OpenAI-compatible models per capability.
+- [x] Replace hard-coded profiles with a validated model registry.
+- [x] Support multiple OpenRouter and local OpenAI-compatible models per capability.
 - [ ] Route general, document, vision, code, embedding, and reranking workloads independently.
 - [ ] Add deterministic priorities and configurable fallback chains.
 - [ ] Add provider timeouts, cancellation signals, bounded retries, and normalized failures.

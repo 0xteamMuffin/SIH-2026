@@ -1,16 +1,8 @@
-import { env } from "../../config/env.js";
+import { modelProfiles, type ModelProfile, type TaskCapability } from "./model-registry.js";
 
-export type TaskCapability = "document" | "vision" | "code" | "general";
-export type ModelProfile = {
-  id: string;
-  provider: "openrouter" | "local";
-  modelId: string;
-  capabilities: TaskCapability[];
-  endpoint?: string;
-  sovereign: boolean;
-};
+export type { ModelProfile, TaskCapability } from "./model-registry.js";
 
-export type RoutingDecision = { capability: TaskCapability; profile: ModelProfile; reason: string };
+export type RoutingDecision = { capability: TaskCapability; profile: ModelProfile; fallbacks: ModelProfile[]; reason: string };
 
 function inferCapability(task: string, hasAttachment: boolean): TaskCapability {
   const input = task.toLowerCase();
@@ -20,20 +12,12 @@ function inferCapability(task: string, hasAttachment: boolean): TaskCapability {
   return "general";
 }
 
-export function modelProfiles(): ModelProfile[] {
-  if (env.MODEL_PROVIDER === "openrouter") {
-    return [{ id: "openrouter-development", provider: "openrouter", modelId: env.OPENROUTER_MODEL, capabilities: ["document", "vision", "code", "general"], sovereign: false }];
-  }
-  return [
-    { id: "local-general", provider: "local", endpoint: env.LOCAL_MODEL_BASE_URL, modelId: env.LOCAL_GENERAL_MODEL, capabilities: ["general", "document"], sovereign: true },
-    { id: "local-vision", provider: "local", endpoint: env.LOCAL_MODEL_BASE_URL, modelId: env.LOCAL_VISION_MODEL, capabilities: ["vision", "document"], sovereign: true },
-    { id: "local-code", provider: "local", endpoint: env.LOCAL_MODEL_BASE_URL, modelId: env.LOCAL_CODE_MODEL, capabilities: ["code"], sovereign: true },
-  ];
-}
-
-export function selectModel(task: string, hasAttachment: boolean): RoutingDecision {
+export function selectModel(task: string, hasAttachment: boolean, profiles = modelProfiles()): RoutingDecision {
   const capability = inferCapability(task, hasAttachment);
-  const profile = modelProfiles().find((item) => item.capabilities.includes(capability));
+  const candidates = profiles
+    .filter((item) => item.enabled && item.capabilities.includes(capability))
+    .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+  const [profile, ...fallbacks] = candidates;
   if (!profile) throw new Error(`No model profile supports ${capability}`);
-  return { capability, profile, reason: `Task capability '${capability}' selected from task content and attachment context.` };
+  return { capability, profile, fallbacks, reason: `Task capability '${capability}' selected profile '${profile.id}' by configured priority.` };
 }

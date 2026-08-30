@@ -16,6 +16,7 @@ const schema = z.object({
   SANDBOX_RUNNER_URL: z.string().url(),
   APP_MODE: z.enum(["development", "sovereign"]).default("development"),
   MODEL_PROVIDER: z.enum(["openrouter", "local"]),
+  MODEL_REGISTRY_JSON: z.string().optional(),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default("meta-llama/llama-3.3-70b-instruct"),
   LOCAL_MODEL_BASE_URL: z.string().url().optional(),
