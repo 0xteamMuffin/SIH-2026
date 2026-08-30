@@ -1,4 +1,4 @@
-# SIH-2026 — Sovereign Industrial AI Workbench
+# SIH-26117 — Sovereign Industrial AI Workbench
 
 An on-premise agentic AI workbench for confidential industrial knowledge work.
 
