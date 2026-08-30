@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { ApprovalStatus, ArtifactExtractionStatus, ArtifactLifecycleStatus, DataClassification, EvidenceKind, Prisma, RunStatus, RunToolCallStatus, ToolRiskLevel, UserRole } from "@prisma/client";
+import { ApprovalStatus, ArtifactExtractionStatus, ArtifactKind, ArtifactLifecycleStatus, DataClassification, EvidenceKind, Prisma, RunStatus, RunToolCallStatus, ToolRiskLevel, UserRole } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { audit } from "../../lib/audit.js";
@@ -441,7 +441,8 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
             ? { bytes: await generateXlsx(spreadsheetInput(run.task, analysis, sourceEvidence)), filename: `workbook-${run.id}.xlsx`, mimeType: XLSX_MIME_TYPE, summary: "Generated cited XLSX" }
             : { bytes: Buffer.from(await approvalNoteDocx(run.task, sourceEvidence)), filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", summary: "Generated approval-note DOCX" };
         signal.throwIfAborted();
-        const artifact = await createArtifact({ workspaceId: run.workspaceId, userId: run.requestedBy, filename: output.filename, mimeType: output.mimeType, kind: "GENERATED_DOCX", classification: run.dataClassification, bytes: output.bytes, idempotencyKey: `run-${run.id}-${format}` });
+        const kind = format === "pptx" ? ArtifactKind.GENERATED_PPTX : format === "xlsx" ? ArtifactKind.GENERATED_XLSX : ArtifactKind.GENERATED_DOCX;
+        const artifact = await createArtifact({ workspaceId: run.workspaceId, userId: run.requestedBy, filename: output.filename, mimeType: output.mimeType, kind, classification: run.dataClassification, bytes: output.bytes, idempotencyKey: `run-${run.id}-${format}` });
         result.artifact = artifact;
         return { ok: true, summary: output.summary, data: { artifactId: artifact.id } };
       }, signal, toolOptions);

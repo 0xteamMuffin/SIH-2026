@@ -43,7 +43,7 @@ function encodeCursor(artifact: Pick<ArtifactMetadataRow, "createdAt" | "id">) {
   return Buffer.from(JSON.stringify({ createdAt: artifact.createdAt.toISOString(), id: artifact.id })).toString("base64url");
 }
 
-export async function createArtifact(input: { workspaceId: string; userId: string; filename: string; mimeType: string; kind: "SOURCE" | "GENERATED_DOCX" | "CODE_OUTPUT"; classification?: DataClassification; detectedMimeType?: string; bytes: Buffer; idempotencyKey?: string; previousArtifactId?: string; retentionUntil?: Date }) {
+export async function createArtifact(input: { workspaceId: string; userId: string; filename: string; mimeType: string; kind: ArtifactKind; classification?: DataClassification; detectedMimeType?: string; bytes: Buffer; idempotencyKey?: string; previousArtifactId?: string; retentionUntil?: Date }) {
   const key = input.idempotencyKey?.replace(/[^a-zA-Z0-9._-]/g, "_") ?? crypto.randomUUID();
   const objectKey = `${input.workspaceId}/${key}-${input.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
   if (input.idempotencyKey) {

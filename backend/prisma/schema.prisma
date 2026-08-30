@@ -53,6 +53,8 @@ enum EvidenceKind {
 enum ArtifactKind {
   SOURCE
   GENERATED_DOCX
+  GENERATED_PPTX
+  GENERATED_XLSX
   CODE_OUTPUT
 }
 

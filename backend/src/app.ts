@@ -992,7 +992,7 @@ export const openApiDocument = {
         },
       },
       DataClassification: { type: "string", enum: ["PUBLIC", "SYNTHETIC", "INTERNAL", "CONFIDENTIAL"] },
-      ArtifactKind: { type: "string", enum: ["SOURCE", "GENERATED_DOCX", "CODE_OUTPUT"] },
+      ArtifactKind: { type: "string", enum: ["SOURCE", "GENERATED_DOCX", "GENERATED_PPTX", "GENERATED_XLSX", "CODE_OUTPUT"] },
       ArtifactExtractionStatus: { type: "string", enum: ["NOT_REQUIRED", "PENDING", "PROCESSING", "COMPLETED", "FAILED"] },
       ArtifactLifecycleStatus: { type: "string", enum: ["ACTIVE", "DELETING", "DELETED"] },
       ArtifactDeletionJobStatus: { type: "string", enum: ["QUEUED", "RUNNING", "SUCCEEDED", "FAILED"] },
