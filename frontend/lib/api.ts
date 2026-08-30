@@ -1,5 +1,5 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
-const DEFAULT_DATA_CLASSIFICATION: DataClassification = "INTERNAL";
+const DEFAULT_DATA_CLASSIFICATION: DataClassification = "SYNTHETIC";
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
