@@ -316,7 +316,7 @@ describe("agent run access", () => {
     }]);
   });
 
-  it("sends a bounded original image with extraction text without persisting its bytes", async () => {
+  it("sends a bounded original image without Docling and does not persist its bytes", async () => {
     const run = {
       id: "run-vision",
       workspaceId: "workspace-1",
@@ -337,6 +337,8 @@ describe("agent run access", () => {
       detectedMimeType: "image/png",
       objectKey: "workspace-1/drawing.png",
       sizeBytes: 4n,
+      extractionStatus: "FAILED",
+      extractionError: "[EXTRACTION_UNAVAILABLE] Document extraction service is unavailable",
     };
     const selectedProfile = {
       id: "local-vision",
@@ -355,7 +357,7 @@ describe("agent run access", () => {
     agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
     agentRunMock.updateMany.mockResolvedValue({ count: 1 });
     artifactMock.find.mockResolvedValue(source);
-    extractArtifactMock.mockResolvedValue({ text: "OCR: valve V-101 is open", metadata: { sourceMimeType: "image/png" } });
+    extractArtifactMock.mockRejectedValue(new AppError(502, "Document extraction service is unavailable", "EXTRACTION_UNAVAILABLE"));
     getArtifactBoundedMock.mockResolvedValue(imageBytes);
     runToolCallMock.findUnique.mockResolvedValue(null);
     runToolCallMock.create.mockResolvedValue({});
@@ -370,9 +372,11 @@ describe("agent run access", () => {
     expect(getArtifactBoundedMock).toHaveBeenCalledWith(source.objectKey, 10 * 1024 * 1024, expect.any(AbortSignal));
     expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({
       classification: DataClassification.INTERNAL,
-      prompt: expect.stringContaining("OCR: valve V-101 is open"),
+      prompt: expect.stringContaining("visual findings are not OCR-grounded"),
       images: [{ mimeType: "image/png", bytes: imageBytes }],
     }));
+    expect(extractArtifactMock).not.toHaveBeenCalled();
+    expect(evidenceMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ facts: [] }) });
     const persistedCalls = JSON.stringify({ messages: runMessageMock.create.mock.calls, toolCreates: runToolCallMock.create.mock.calls, toolUpdates: runToolCallMock.update.mock.calls });
     expect(persistedCalls).not.toContain(imageBytes.toString("base64"));
     expect(persistedCalls).not.toContain('"bytes"');
@@ -380,7 +384,7 @@ describe("agent run access", () => {
     expect(persistedCalls).toContain('"mode":"original-image"');
   });
 
-  it("uses extraction text and bounded rendered pages for PDFs", async () => {
+  it("uses bounded rendered PDF pages without Docling", async () => {
     const run = {
       id: "run-pdf",
       workspaceId: "workspace-1",
@@ -393,13 +397,13 @@ describe("agent run access", () => {
       sourceArtifactId: "10000000-0000-4000-8000-000000000002",
       status: RunStatus.PENDING,
     };
-    const source = { id: "10000000-0000-4000-8000-000000000002", workspaceId: "workspace-1", filename: "drawing.pdf", mimeType: "application/pdf", detectedMimeType: "application/pdf", objectKey: "workspace-1/drawing.pdf", sizeBytes: 100n };
+    const source = { id: "10000000-0000-4000-8000-000000000002", workspaceId: "workspace-1", filename: "drawing.pdf", mimeType: "application/pdf", detectedMimeType: "application/pdf", objectKey: "workspace-1/drawing.pdf", sizeBytes: 100n, extractionStatus: "FAILED", extractionError: "[EXTRACTION_UNAVAILABLE] Document extraction service is unavailable" };
     const selectedProfile = { id: "local-vision", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["vision"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
     agentRunMock.findUnique.mockResolvedValue(run);
     agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
     agentRunMock.updateMany.mockResolvedValue({ count: 1 });
     artifactMock.find.mockResolvedValue(source);
-    extractArtifactMock.mockResolvedValue({ text: "Extracted PDF text", metadata: { sourceMimeType: "application/pdf" } });
+    extractArtifactMock.mockRejectedValue(new AppError(502, "Document extraction service is unavailable", "EXTRACTION_UNAVAILABLE"));
     const pdfBytes = Buffer.from("%PDF-test");
     const pageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
     getArtifactBoundedMock.mockResolvedValue(pdfBytes);
@@ -425,9 +429,45 @@ describe("agent run access", () => {
     expect(getArtifactBoundedMock).toHaveBeenCalledWith(source.objectKey, expect.any(Number), expect.any(AbortSignal));
     expect(renderPdfPagesMock).toHaveBeenCalledWith(pdfBytes, expect.any(AbortSignal));
     expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({ images: [{ mimeType: "image/png", bytes: pageBytes }], prompt: expect.stringContaining("Rendered PDF pages supplied in order: 1 of 1") }));
+    expect(extractArtifactMock).not.toHaveBeenCalled();
+    expect(evidenceMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ facts: [] }) });
     const persistedCalls = JSON.stringify(runMessageMock.create.mock.calls);
     expect(persistedCalls).toContain('"mode":"rendered-pdf-pages"');
     expect(persistedCalls).toContain('"pageNumber":1');
+  });
+
+  it("requires Docling extraction for a non-vision document source", async () => {
+    const run = {
+      id: "run-document",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Summarize this PDF",
+      taskCapability: "document",
+      modelProfile: "local-general",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.INTERNAL,
+      sourceArtifactId: "10000000-0000-4000-8000-000000000003",
+      status: RunStatus.PENDING,
+    };
+    const source = { id: run.sourceArtifactId, workspaceId: run.workspaceId, filename: "report.pdf", mimeType: "application/pdf", detectedMimeType: "application/pdf", objectKey: "workspace-1/report.pdf", sizeBytes: 100n, extractionStatus: "FAILED" };
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    artifactMock.find.mockResolvedValue(source);
+    extractArtifactMock.mockRejectedValue(new AppError(502, "Document extraction service is unavailable", "EXTRACTION_UNAVAILABLE"));
+    runToolCallMock.findUnique.mockResolvedValue(null);
+    runToolCallMock.create.mockResolvedValue({});
+    runToolCallMock.update.mockResolvedValue({});
+    runMessageMock.create.mockResolvedValue({});
+
+    await expect(processRun(run.id)).rejects.toMatchObject({ code: "EXTRACTION_UNAVAILABLE" });
+
+    expect(extractArtifactMock).toHaveBeenCalledWith(source.id, expect.any(AbortSignal));
+    expect(renderPdfPagesMock).not.toHaveBeenCalled();
+    expect(invokeModelMock).not.toHaveBeenCalled();
+    expect(runToolCallMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ output: expect.objectContaining({ errorCode: "EXTRACTION_UNAVAILABLE" }) }),
+    }));
   });
 
   it("does not overwrite a cancelled run after worker failure", async () => {

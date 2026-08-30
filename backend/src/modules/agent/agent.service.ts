@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { ApprovalStatus, ArtifactLifecycleStatus, DataClassification, EvidenceKind, Prisma, RunStatus, RunToolCallStatus, ToolRiskLevel, UserRole } from "@prisma/client";
+import { ApprovalStatus, ArtifactExtractionStatus, ArtifactLifecycleStatus, DataClassification, EvidenceKind, Prisma, RunStatus, RunToolCallStatus, ToolRiskLevel, UserRole } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { audit } from "../../lib/audit.js";
@@ -7,7 +7,7 @@ import { AppError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { mostRestrictiveClassification } from "../../lib/data-classification.js";
 import { invokeModelWithFallbacks } from "../../infrastructure/models/model-orchestrator.js";
-import { visionImageMimeTypes, type ModelImageInput, type VisionImageMimeType } from "../../infrastructure/models/model-provider.js";
+import type { ModelImageInput, VisionImageMimeType } from "../../infrastructure/models/model-provider.js";
 import { renderPdfPages } from "../../infrastructure/pdf-renderer/pdf-renderer-client.js";
 import { eligibleRoutingDecision, routingDecisionForPersistedRun, selectModel } from "../../infrastructure/models/model-router.js";
 import { runCode } from "../../infrastructure/sandbox/sandbox-client.js";
@@ -28,6 +28,7 @@ import { searchAgentKnowledge, type KnowledgeSearchCitation } from "./agent-know
 
 const MAX_SOURCE_CHARS = 12_000;
 const EXTRACTION_VERSION = "canonical-v1";
+const DIRECT_VISION_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 const CREATE_ADMISSION_LOCK_ID = 1_397_311_489;
 const EXECUTION_ADMISSION_LOCK_ID = 1_397_311_490;
 const toJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -90,7 +91,7 @@ export async function executeRunTool(runId: string, name: string, input: object,
     await prisma.runToolCall.update({ where: { runId_modelToolCallId: { runId, modelToolCallId } }, data: { status: result.ok ? RunToolCallStatus.COMPLETED : RunToolCallStatus.FAILED, output: toJson(result), completedAt: new Date() } });
     return result;
   } catch (error) {
-    const result: ToolResult = { ok: false, summary: error instanceof Error ? error.message : "Tool failed", errorCode: "TOOL_FAILED" };
+    const result: ToolResult = { ok: false, summary: error instanceof Error ? error.message : "Tool failed", errorCode: error instanceof AppError ? error.code : "TOOL_FAILED" };
     await prisma.runToolCall.updateMany({ where: { runId, modelToolCallId, status: RunToolCallStatus.RUNNING }, data: { status: RunToolCallStatus.FAILED, output: toJson(result), completedAt: new Date() } });
     if (signal?.aborted || isTerminalModelError(error)) throw error;
     return result;
@@ -246,45 +247,87 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
     if (sourceArtifactId) {
       const source = await findArtifact(sourceArtifactId);
       if (!source || source.workspaceId !== run.workspaceId) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
-      const read = await executeRunTool(run.id, "artifact.read", { artifactId: source.id, extractionVersion: EXTRACTION_VERSION }, async () => { const extraction = await extractArtifact(source.id, signal); sourceText = extraction.text.slice(0, MAX_SOURCE_CHARS); return { ok: true, summary: `Extracted ${source.filename}`, data: { characters: sourceText.length, text: sourceText } }; }, signal, toolOptions);
-      if (!read.ok) throw new Error(read.summary);
-      if (typeof read.data?.text === "string") sourceText = read.data.text;
-      if (sourceText === undefined) throw new Error("Artifact read completed without source text");
-      evidence.push(await saveEvidence(run.id, EvidenceKind.SOURCE, source.id, `artifact:${source.id}`, source.filename, sourceText.slice(0, 800), sourceText.split(/(?<=[.!?])\s+/).filter(Boolean).slice(0, 8)));
-      if (sourcePhase) await appendMessage(run.id, state.turn, "tool", { tool: "artifact.read", status: read.ok ? "completed" : "failed", summary: read.summary });
-      const extractedSource = await findArtifact(source.id);
-      const sourceMimeType = extractedSource?.detectedMimeType ?? source.detectedMimeType ?? source.mimeType;
-      if (decision.capability === "vision" && visionImageMimeTypes.includes(sourceMimeType as VisionImageMimeType)) {
-        if (sourceMimeType === "image/tiff") {
+      const sourceMimeType = source.detectedMimeType;
+      if (!sourceMimeType) throw new AppError(422, "Source artifact has no validated MIME type", "SOURCE_MIME_UNVALIDATED");
+      if (decision.capability === "vision") {
+        const limitations: string[] = [];
+        let evidenceSummary: string;
+        if (DIRECT_VISION_IMAGE_MIME_TYPES.includes(sourceMimeType as typeof DIRECT_VISION_IMAGE_MIME_TYPES[number])) {
+          const sizeBytes = Number(source.sizeBytes);
+          if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > env.VISION_MAX_IMAGE_BYTES) {
+            throw new AppError(413, `Image must contain between 1 and ${env.VISION_MAX_IMAGE_BYTES} bytes`, "VISION_IMAGE_TOO_LARGE");
+          }
+          const bytes = await getArtifactBounded(source.objectKey, env.VISION_MAX_IMAGE_BYTES, signal);
+          modelImages = [{ mimeType: sourceMimeType as VisionImageMimeType, bytes }];
+          visionInput = { mode: "original-image", sourceMimeType, sizeBytes: bytes.byteLength };
+          evidenceSummary = `Original ${sourceMimeType} source supplied directly to the vision model.`;
+        } else if (sourceMimeType === "application/pdf") {
+          const sizeBytes = Number(source.sizeBytes);
+          if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > env.PDF_RENDER_MAX_SOURCE_BYTES) {
+            throw new AppError(413, `PDF must contain between 1 and ${env.PDF_RENDER_MAX_SOURCE_BYTES} bytes`, "PDF_SOURCE_TOO_LARGE");
+          }
+          const pdfBytes = await getArtifactBounded(source.objectKey, env.PDF_RENDER_MAX_SOURCE_BYTES, signal);
+          const rendered = await renderPdfPages(pdfBytes, signal);
+          modelImages = rendered.pages.map((page) => ({ mimeType: "image/png", bytes: page.bytes }));
+          const renderedPageNumbers = rendered.pages.map((page) => page.pageNumber).join(", ");
+          limitations.push(`Rendered PDF pages supplied in order: ${renderedPageNumbers} of ${rendered.sourcePageCount}. Do not claim visual inspection of pages that were not supplied.`);
+          visionInput = {
+            mode: "rendered-pdf-pages",
+            sourceMimeType,
+            sourcePageCount: rendered.sourcePageCount,
+            selectionPolicy: rendered.selectionPolicy,
+            renderer: rendered.renderer,
+            rendererVersion: rendered.rendererVersion,
+            dpi: rendered.dpi,
+            totalBytes: rendered.totalBytes,
+            renderedPages: rendered.pages.map(({ pageNumber, width, height, sizeBytes: renderedSizeBytes }) => ({ pageNumber, width, height, sizeBytes: renderedSizeBytes })),
+          };
+          evidenceSummary = `Rendered PDF pages ${renderedPageNumbers} of ${rendered.sourcePageCount} were supplied to the vision model.`;
+        } else if (sourceMimeType === "image/tiff") {
           throw new AppError(415, "TIFF images require conversion before OpenAI-compatible vision inference; no conversion is currently implemented", "VISION_PROVIDER_MIME_UNSUPPORTED");
+        } else {
+          throw new AppError(415, `Validated source MIME type '${sourceMimeType}' is not supported for vision inference`, "VISION_SOURCE_MIME_UNSUPPORTED");
         }
-        const sizeBytes = Number(extractedSource?.sizeBytes ?? source.sizeBytes);
-        if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > env.VISION_MAX_IMAGE_BYTES) {
-          throw new AppError(413, `Image must contain between 1 and ${env.VISION_MAX_IMAGE_BYTES} bytes`, "VISION_IMAGE_TOO_LARGE");
+
+        let extractionStatus = "unavailable";
+        if (source.extractionStatus === ArtifactExtractionStatus.COMPLETED) {
+          const read = await executeRunTool(run.id, "artifact.read", { artifactId: source.id, extractionVersion: EXTRACTION_VERSION }, async () => {
+            const extraction = await extractArtifact(source.id, signal);
+            sourceText = extraction.text.slice(0, MAX_SOURCE_CHARS);
+            return { ok: true, summary: `Read completed extraction for ${source.filename}`, data: { characters: sourceText.length, text: sourceText } };
+          }, signal, toolOptions);
+          if (read.ok && typeof read.data?.text === "string") {
+            sourceText = read.data.text;
+            extractionStatus = "completed";
+          } else {
+            limitations.push(`Completed deterministic text extraction could not be read${read.errorCode ? ` (${read.errorCode})` : ""}.`);
+          }
+          if (sourcePhase) await appendMessage(run.id, state.turn, "tool", { tool: "artifact.read", status: read.ok ? "completed" : "failed", summary: read.summary });
+        } else {
+          limitations.push("No completed deterministic text extraction was available; visual findings are not OCR-grounded.");
         }
-        const bytes = await getArtifactBounded(source.objectKey, env.VISION_MAX_IMAGE_BYTES, signal);
-        modelImages = [{ mimeType: sourceMimeType as VisionImageMimeType, bytes }];
-        visionInput = { mode: "original-image", sourceMimeType, sizeBytes: bytes.byteLength };
-      } else if (decision.capability === "vision" && sourceMimeType === "application/pdf") {
-        const sizeBytes = Number(extractedSource?.sizeBytes ?? source.sizeBytes);
-        if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > env.PDF_RENDER_MAX_SOURCE_BYTES) {
-          throw new AppError(413, `PDF must contain between 1 and ${env.PDF_RENDER_MAX_SOURCE_BYTES} bytes`, "PDF_SOURCE_TOO_LARGE");
-        }
-        const pdfBytes = await getArtifactBounded(source.objectKey, env.PDF_RENDER_MAX_SOURCE_BYTES, signal);
-        const rendered = await renderPdfPages(pdfBytes, signal);
-        modelImages = rendered.pages.map((page) => ({ mimeType: "image/png", bytes: page.bytes }));
-        sourceLimitation = `Rendered PDF pages supplied in order: ${rendered.pages.map((page) => page.pageNumber).join(", ")} of ${rendered.sourcePageCount}. Do not claim visual inspection of pages that were not supplied.`;
-        visionInput = {
-          mode: "rendered-pdf-pages",
-          sourceMimeType,
-          sourcePageCount: rendered.sourcePageCount,
-          selectionPolicy: rendered.selectionPolicy,
-          renderer: rendered.renderer,
-          rendererVersion: rendered.rendererVersion,
-          dpi: rendered.dpi,
-          totalBytes: rendered.totalBytes,
-          renderedPages: rendered.pages.map(({ pageNumber, width, height, sizeBytes: renderedSizeBytes }) => ({ pageNumber, width, height, sizeBytes: renderedSizeBytes })),
-        };
+        sourceLimitation = limitations.join(" ");
+        visionInput = { ...visionInput, textExtraction: { status: extractionStatus, artifactStatus: source.extractionStatus }, limitations };
+        evidence.push(await saveEvidence(
+          run.id,
+          EvidenceKind.SOURCE,
+          source.id,
+          `artifact:${source.id}`,
+          source.filename,
+          sourceText?.slice(0, 800) ?? `${evidenceSummary} ${sourceLimitation}`.trim(),
+          sourceText?.split(/(?<=[.!?])\s+/).filter(Boolean).slice(0, 8) ?? [],
+        ));
+      } else {
+        const read = await executeRunTool(run.id, "artifact.read", { artifactId: source.id, extractionVersion: EXTRACTION_VERSION }, async () => {
+          const extraction = await extractArtifact(source.id, signal);
+          sourceText = extraction.text.slice(0, MAX_SOURCE_CHARS);
+          return { ok: true, summary: `Extracted ${source.filename}`, data: { characters: sourceText.length, text: sourceText } };
+        }, signal, toolOptions);
+        if (!read.ok) throw new AppError(502, read.summary, read.errorCode ?? "ARTIFACT_READ_FAILED");
+        if (typeof read.data?.text === "string") sourceText = read.data.text;
+        if (sourceText === undefined) throw new Error("Artifact read completed without source text");
+        evidence.push(await saveEvidence(run.id, EvidenceKind.SOURCE, source.id, `artifact:${source.id}`, source.filename, sourceText.slice(0, 800), sourceText.split(/(?<=[.!?])\s+/).filter(Boolean).slice(0, 8)));
+        if (sourcePhase) await appendMessage(run.id, state.turn, "tool", { tool: "artifact.read", status: "completed", summary: read.summary });
       }
     }
     if (searchesKnowledge) {

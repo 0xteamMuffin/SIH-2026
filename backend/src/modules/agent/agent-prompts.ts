@@ -18,9 +18,12 @@ export function modelMessages(task: string, capability: TaskCapability, sourceTe
       prompt: `Task instructions:\n${task}`,
     };
   }
+  const sourceMaterial = sourceText ?? (sourceLimitation
+    ? "No deterministic source text was available. Use only the supplied visual input and honor the stated limitation."
+    : "No source artifact was provided. State that the requested document analysis cannot be completed without source evidence.");
   return {
     system: evidenceSystemPrompt,
-    prompt: `Task: ${task}\n\nSource material:\n${sourceText ?? "No source artifact was provided. State that the requested document analysis cannot be completed without source evidence."}${sourceLimitation ? `\n\nInput limitation:\n${sourceLimitation}` : ""}`,
+    prompt: `Task: ${task}\n\nSource material:\n${sourceMaterial}${sourceLimitation ? `\n\nInput limitation:\n${sourceLimitation}` : ""}`,
   };
 }
 
