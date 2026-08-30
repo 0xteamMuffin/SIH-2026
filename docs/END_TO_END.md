@@ -41,9 +41,11 @@ docker compose -f docker-compose.yml -f docker-compose.sovereign.yml up --build
 
 Configure providers, endpoints, model IDs, capabilities, and routing priorities in `backend/config/models.json`. Provider credentials are referenced by environment-variable name and are never stored in that file.
 
+Qdrant requires `QDRANT_API_KEY`. Compose retains a development-only fallback for existing local `.env` files; replace it with a long random secret before shared, production, or sovereign use. The backend `/health` endpoint is process liveness and does not contact dependencies, while `/ready` returns `503` until authenticated Qdrant access succeeds.
+
 ## Current boundaries
 
-- Qdrant is deployed but knowledge-base ingestion/retrieval is the next module to wire in.
+- Qdrant is authenticated and has a provider-neutral collection administration boundary. Chunks, embeddings, indexing jobs, retrieval, and access-control filters are not implemented yet.
 - Docling is an optional deterministic parser rather than the intelligence layer. Worker startup and non-document tasks do not depend on its availability; semantic interpretation of complex visual material uses the selected vision-capable model.
 - The current agent persists bounded orchestrated tools; native local-model tool calling is the next harness enhancement.
 - Ollama is not included in the active Compose stack so no Ollama image is pulled.

@@ -13,6 +13,7 @@ x-backend-env: &backend-env
   S3_SECRET_KEY: ${S3_SECRET_KEY}
   MINIO_BUCKET: ${MINIO_BUCKET}
   QDRANT_URL: ${QDRANT_URL}
+  QDRANT_API_KEY: ${QDRANT_API_KEY:-local-development-qdrant-key-change-me}
   SANDBOX_RUNNER_URL: http://sandbox-runner:4100
   AMQP_URL: ${AMQP_URL}
   APP_MODE: ${APP_MODE}
@@ -80,7 +81,9 @@ services:
     networks: [internal]
 
   qdrant:
-    image: qdrant/qdrant:v1.13.4
+    image: qdrant/qdrant:v1.19.0
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-local-development-qdrant-key-change-me}
     volumes: [qdrant_data:/qdrant/storage]
     networks: [internal]
 

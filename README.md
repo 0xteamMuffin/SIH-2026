@@ -25,12 +25,14 @@ Development can use any configured remote OpenAI-compatible endpoint when `ALLOW
 
 For an air-gapped deployment, start `docker compose -f docker-compose.yml -f docker-compose.sovereign.yml up --build`. The sovereign override disables every remote model profile, removes remote credentials and backend egress, and uses only local profiles from `backend/config/models.json`.
 
+Compose supplies `local-development-qdrant-key-change-me` only when an older local `.env` has no `QDRANT_API_KEY`. Replace this fallback with a long random value before any shared, production, or sovereign deployment. The same value authenticates the internal Qdrant service, API, and worker; Qdrant is not published to the host.
+
 ## Included services
 
 - Express API and Next.js workbench
 - PostgreSQL for users, workspaces, agent runs, evidence, tool calls, artifacts, and audit events
 - MinIO for uploaded and generated files
-- Qdrant for local knowledge retrieval
+- Authenticated Qdrant infrastructure for future local knowledge retrieval
 - Isolated Docker sandbox runner for coding tasks
 - Provider-neutral local-model endpoint configuration for a future internal model server
 

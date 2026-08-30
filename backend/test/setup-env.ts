@@ -9,6 +9,7 @@ process.env.S3_ACCESS_KEY = "test";
 process.env.S3_SECRET_KEY = "test-secret";
 process.env.MINIO_BUCKET = "test-artifacts";
 process.env.QDRANT_URL = "http://localhost:6333";
+process.env.QDRANT_API_KEY = "test-qdrant-api-key";
 process.env.SANDBOX_RUNNER_URL = "http://localhost:4100";
 process.env.DOCLING_BASE_URL = "http://localhost:5001";
 process.env.DOCLING_API_KEY = "test-docling-api-key";

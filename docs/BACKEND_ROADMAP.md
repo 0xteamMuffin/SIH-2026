@@ -86,8 +86,9 @@ Acceptance gate: supported fixtures produce bounded structured extraction, unsaf
 
 ## Phase 5: Knowledge retrieval
 
-Status: pending
+Status: in progress
 
+- [x] Pin and authenticate Qdrant; add readiness and validated named-vector collection administration.
 - [ ] Add local CPU embedding with pinned model files for offline deployment.
 - [ ] Chunk extracted content while preserving source locations and hierarchy.
 - [ ] Index workspace-private and organization-shared knowledge in Qdrant.
