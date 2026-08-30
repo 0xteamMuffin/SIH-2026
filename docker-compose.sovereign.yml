@@ -1,9 +1,11 @@
 services:
   backend:
-    networks: [internal]
+    networks: !override [internal]
     environment:
       APP_MODE: sovereign
       MODEL_PROVIDER: local
+      OPENROUTER_API_KEY: !reset null
+      OPENROUTER_MODEL: !reset null
       LOCAL_MODEL_BASE_URL: ${LOCAL_MODEL_BASE_URL}
       LOCAL_MODEL_API_KEY: ${LOCAL_MODEL_API_KEY}
       LOCAL_GENERAL_MODEL: ${LOCAL_GENERAL_MODEL}
