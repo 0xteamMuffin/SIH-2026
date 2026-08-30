@@ -3,6 +3,7 @@ import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../lib/errors.js";
 import { allowsExternalInference } from "../../lib/data-classification.js";
 import { askModel, type ModelImageInput, type ModelResponse } from "./model-provider.js";
+import { estimateInvocationCost } from "./model-pricing.js";
 import type { ModelProfile } from "./model-registry.js";
 import type { RoutingDecision } from "./model-router.js";
 import type { ModelTokenBudget } from "../../modules/agent/agent-runtime.js";
@@ -100,7 +101,17 @@ export async function invokeModelWithFallbacks(input: {
     );
     const boundedProfile = maxOutputTokens === profile.maxOutputTokens ? profile : { ...profile, maxOutputTokens };
     const invocation = await prisma.modelInvocation.create({
-      data: { runId: input.runId, providerId: profile.providerId, profileId: profile.id, modelId: profile.modelId, attempt, status: ModelInvocationStatus.RUNNING },
+      data: {
+        runId: input.runId,
+        providerId: profile.providerId,
+        profileId: profile.id,
+        modelId: profile.modelId,
+        attempt,
+        status: ModelInvocationStatus.RUNNING,
+        estimatedCostMicros: profile.pricing?.inputPerMillionTokens === 0 && profile.pricing?.outputPerMillionTokens === 0 ? 0 : undefined,
+        pricingVersion: profile.pricing?.version,
+        pricingCurrency: profile.pricing?.currency,
+      },
     });
     const startedAt = performance.now();
     let response: ModelResponse;
@@ -133,6 +144,7 @@ export async function invokeModelWithFallbacks(input: {
       throw new RunTokenBudgetError("Model provider did not report complete token usage", input.tokenBudget, usage, "RUN_TOKEN_USAGE_UNAVAILABLE");
     }
     const totalTokens = Math.max(response.usage?.totalTokens ?? 0, promptTokens + completionTokens);
+    const cost = estimateInvocationCost(profile, { promptTokens, completionTokens });
     await prisma.modelInvocation.update({
       where: { id: invocation.id },
       data: {
@@ -141,6 +153,7 @@ export async function invokeModelWithFallbacks(input: {
         promptTokens,
         completionTokens,
         totalTokens,
+        estimatedCostMicros: cost?.estimatedCostMicros,
         finishReason: response.finishReason,
         completedAt: new Date(),
       },

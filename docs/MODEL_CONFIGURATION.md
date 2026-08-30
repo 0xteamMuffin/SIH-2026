@@ -32,11 +32,15 @@ Database, storage, authentication, and sandbox variables remain separate because
 `backend/config/models.json` contains two lists:
 
 - `providers` defines an identifier, `local` or `remote` location, OpenAI-compatible base URL, and optional credential environment-variable name.
-- `models` defines a stable profile identifier, provider reference, provider-specific model identifier, capabilities, priority, enabled state, and output-token limit.
+- `models` defines a stable profile identifier, provider reference, provider-specific model identifier, capabilities, priority, enabled state, output-token limit, and optional versioned pricing.
 
 Lower priority numbers are selected first. Other matching profiles become ordered fallback candidates. Provider-specific model names are configuration values and may be replaced without changing backend code.
 
 The development registry currently assigns separate free profiles for general documents, deeper reasoning, coding, vision, text embeddings, and multimodal embeddings. Free model availability changes over time, so these entries are configuration rather than application constants.
+
+## Pricing metadata
+
+Optional `pricing` metadata records `version`, `currency`, `inputPerMillionTokens`, and `outputPerMillionTokens`. Successful model invocations with complete token usage persist an estimated integer micro-USD cost together with the pricing version and currency used for the estimate. Profiles without pricing retain a null estimate; the backend does not invent rates. Model IDs marked `:free` and `openrouter/free` must declare versioned zero input and output rates, producing an estimated cost of zero.
 
 ## Embedding profiles
 
@@ -57,6 +61,16 @@ The configured character and batch limits are application safety limits and may 
 Text embedding selection considers only enabled profiles that declare `TEXT`, applies the data-classification policy, then chooses exactly one profile by ascending priority and profile ID. The selected registry object is compatible with the embedding provider's `EmbeddingProfile` input.
 
 An index is bound to the selected profile's immutable `revision`, `dimensions`, and `distance`. Do not retry or fall back to another embedding profile for writes or queries in that index, even when another profile has the same dimensions. A profile failure must fail the operation; changing vector spaces requires a new index and re-embedding its contents.
+
+## Optional reranking
+
+A profile with the `reranking` capability must declare an immutable `revision`, `maxDocuments`, `maxDocumentCharacters`, `maxBatchCharacters`, and `maxQueryCharacters`. The provider boundary uses the OpenAI-compatible-style `POST /rerank` request and requires a complete, unique result permutation.
+
+Retrieval first applies workspace, source lifecycle, revision, and classification checks. Only those authorized candidates may be reranked. Selection applies the same remote-inference policy as generation and embeddings, so internal or confidential queries and candidate text never reach a remote reranker. If no eligible reranking profile exists, retrieval safely preserves vector-similarity ordering without making a provider request.
+
+## Provider probes
+
+`GET /api/admin/model-providers/status` requires a global administrator. It sends an authenticated, content-free `GET /models` request to each configured and policy-enabled provider, then compares returned model IDs with enabled profiles to report provider, profile, and capability availability. Disabled remote providers and providers missing endpoints or credentials are reported without network access. Probe responses and errors never include credentials, configured environment-variable names, upstream bodies, prompts, or document content.
 
 ## Remote inference
 

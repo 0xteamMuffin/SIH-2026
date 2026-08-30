@@ -179,4 +179,22 @@ describe("model fallback orchestration", () => {
       tokenBudget,
     })).rejects.toMatchObject({ code: "RUN_TOKEN_USAGE_UNAVAILABLE" });
   });
+
+  it("persists a versioned zero estimate for a free invocation", async () => {
+    askModelMock.mockResolvedValue(response);
+    const free = profile("primary");
+    free.pricing = { version: "free-2026-08-30", currency: "USD", inputPerMillionTokens: 0, outputPerMillionTokens: 0 };
+
+    await invokeModelWithFallbacks({
+      runId: "run-1",
+      decision: { capability: "general", profile: free, fallbacks: [], reason: "test" },
+      classification: DataClassification.INTERNAL,
+      system: "system",
+      prompt: "prompt",
+      tokenBudget,
+    });
+
+    expect(modelInvocationMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ estimatedCostMicros: 0, pricingVersion: "free-2026-08-30", pricingCurrency: "USD" }) });
+    expect(modelInvocationMock.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ estimatedCostMicros: 0 }) }));
+  });
 });

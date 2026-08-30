@@ -42,28 +42,32 @@
       "providerId": "development-remote",
       "modelId": "nvidia/nemotron-3-super-120b-a12b:free",
       "capabilities": ["general", "document"],
-      "priority": 10
+      "priority": 10,
+      "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
     {
       "id": "remote-reasoning",
       "providerId": "development-remote",
       "modelId": "nvidia/nemotron-3-ultra-550b-a55b:free",
       "capabilities": ["general", "document", "code"],
-      "priority": 20
+      "priority": 20,
+      "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
     {
       "id": "remote-code",
       "providerId": "development-remote",
       "modelId": "cohere/north-mini-code:free",
       "capabilities": ["code"],
-      "priority": 10
+      "priority": 10,
+      "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
     {
       "id": "remote-vision",
       "providerId": "development-remote",
       "modelId": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
       "capabilities": ["vision"],
-      "priority": 10
+      "priority": 10,
+      "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
     {
       "id": "remote-text-embedding",
@@ -77,7 +81,8 @@
       "maxBatchInputs": 32,
       "maxBatchCharacters": 120000,
       "maxInputCharacters": 120000,
-      "inputModalities": ["TEXT"]
+      "inputModalities": ["TEXT"],
+      "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
     {
       "id": "remote-multimodal-embedding",
@@ -91,14 +96,16 @@
       "maxBatchInputs": 32,
       "maxBatchCharacters": 120000,
       "maxInputCharacters": 120000,
-      "inputModalities": ["TEXT", "IMAGE"]
+      "inputModalities": ["TEXT", "IMAGE"],
+      "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
     {
       "id": "remote-free-fallback",
       "providerId": "development-remote",
       "modelId": "openrouter/free",
       "capabilities": ["general", "document", "vision", "code"],
-      "priority": 900
+      "priority": 900,
+      "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
     {
       "id": "groq-general",

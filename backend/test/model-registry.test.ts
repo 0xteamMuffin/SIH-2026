@@ -119,6 +119,25 @@ describe("model registry", () => {
     expect(() => parseModelConfiguration(input({ ...embedding, inputModalities: ["TEXT"] }))).toThrow("maxInputCharacters cannot exceed maxBatchCharacters");
   });
 
+  it("requires bounded metadata for reranking profiles", () => {
+    const input = JSON.stringify({
+      providers: [{ id: "local", location: "local", baseUrl: "http://localhost:11434/v1" }],
+      models: [{ id: "reranker", providerId: "local", modelId: "reranker-v1", capabilities: ["reranking"], revision: "v1", maxDocuments: 100, maxDocumentCharacters: 4_000, maxBatchCharacters: 100_000 }],
+    });
+
+    expect(() => parseModelConfiguration(input)).toThrow("Reranking profile requires 'maxQueryCharacters'");
+  });
+
+  it("requires free models to have versioned zero pricing", () => {
+    const configuration = (pricing?: object) => JSON.stringify({
+      providers: [{ id: "remote", location: "remote", baseUrl: "https://models.example/v1" }],
+      models: [{ id: "free", providerId: "remote", modelId: "vendor/model:free", capabilities: ["general"], ...(pricing ? { pricing } : {}) }],
+    });
+
+    expect(() => parseModelConfiguration(configuration())).toThrow("Free model profiles require versioned zero pricing");
+    expect(() => parseModelConfiguration(configuration({ version: "v1", currency: "USD", inputPerMillionTokens: 0, outputPerMillionTokens: 1 }))).toThrow("Free model profile pricing must be zero");
+  });
+
   it("configures the expected embedding vector dimensions and immutable revisions", () => {
     const configured = parseModelConfiguration(readFileSync(new URL("../config/models.json", import.meta.url), "utf8"));
     const embeddings = configured.filter((profile) => profile.capabilities.includes("embedding"));
@@ -129,6 +148,16 @@ describe("model registry", () => {
       { id: "cloudflare-embedding", dimensions: 1_024, inputModalities: ["TEXT"], revision: "baai/bge-m3@5617a9f61b028005a4858fdac845db406aefb181" },
       { id: "local-text-embedding", dimensions: 768, inputModalities: ["TEXT"], revision: "nomic-embed-text-v1.5" },
     ]);
+  });
+
+  it("keeps every configured free profile explicitly zero-cost and versioned", () => {
+    const configured = parseModelConfiguration(readFileSync(new URL("../config/models.json", import.meta.url), "utf8"));
+    const free = configured.filter((profile) => profile.modelId.endsWith(":free") || profile.modelId === "openrouter/free");
+
+    expect(free.length).toBeGreaterThan(0);
+    expect(free.every((profile) => profile.pricing?.version === "openrouter-free-2026-08-30"
+      && profile.pricing.inputPerMillionTokens === 0
+      && profile.pricing.outputPerMillionTokens === 0)).toBe(true);
   });
 
   it("routes capabilities by deterministic priority with ordered fallbacks", () => {

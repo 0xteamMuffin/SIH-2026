@@ -17,6 +17,7 @@ import { z } from "zod";
 import { embedTexts, type EmbeddingVector } from "../../infrastructure/embeddings/embedding-provider.js";
 import { selectEmbeddingProfile } from "../../infrastructure/embeddings/embedding-profile-resolver.js";
 import type { EmbeddingModelProfile } from "../../infrastructure/models/model-registry.js";
+import { rerankIfConfigured, type OptionalReranker } from "../../infrastructure/models/reranking-provider.js";
 import { getQdrantDataPlane } from "../../infrastructure/vector-store/qdrant-data-plane.js";
 import type { VectorPayload, VectorQueryMatch, VectorStoreDataPlane } from "../../infrastructure/vector-store/vector-store-data-plane.js";
 import { AppError } from "../../lib/errors.js";
@@ -41,6 +42,8 @@ const PERMANENT_ERROR_CODES = new Set([
   "KNOWLEDGE_QUERY_STATE_CHANGED",
   "KNOWLEDGE_QUERY_STATE_INVALID",
   "REMOTE_INFERENCE_DISABLED",
+  "RERANKING_INPUT_INVALID",
+  "RERANKING_PROVIDER_NOT_CONFIGURED",
 ]);
 
 const uuidSchema = z.string().uuid();
@@ -96,6 +99,7 @@ export type KnowledgeQueryProcessorDependencies = {
   vectorStore: Pick<VectorStoreDataPlane, "queryPoints">;
   resolveEmbeddingProfile: (classification: DataClassification) => EmbeddingModelProfile;
   embed: (profile: EmbeddingModelProfile, classification: DataClassification, inputs: readonly string[], signal?: AbortSignal) => Promise<EmbeddingVector[]>;
+  rerank: OptionalReranker;
   now: () => Date;
   monotonicNow: () => number;
   leaseDurationMs: number;
@@ -107,6 +111,7 @@ function resolvedDependencies(dependencies: Partial<KnowledgeQueryProcessorDepen
     vectorStore: dependencies.vectorStore ?? getQdrantDataPlane(),
     resolveEmbeddingProfile: dependencies.resolveEmbeddingProfile ?? selectEmbeddingProfile,
     embed: dependencies.embed ?? embedTexts,
+    rerank: dependencies.rerank ?? rerankIfConfigured,
     now: dependencies.now ?? (() => new Date()),
     monotonicNow: dependencies.monotonicNow ?? (() => performance.now()),
     leaseDurationMs: dependencies.leaseDurationMs ?? DEFAULT_LEASE_DURATION_MS,
@@ -472,6 +477,12 @@ function assembleCitations(
   return citations;
 }
 
+function rerankingClassification(queryClassification: DataClassification, sourceIndexes: AuthoritativeSourceIndex[]): DataClassification {
+  if (sourceIndexes.some((sourceIndex) => sourceIndex.source.artifact.classification === DataClassification.CONFIDENTIAL)) return DataClassification.CONFIDENTIAL;
+  if (sourceIndexes.some((sourceIndex) => sourceIndex.source.artifact.classification === DataClassification.INTERNAL)) return DataClassification.INTERNAL;
+  return queryClassification;
+}
+
 export async function processKnowledgeQueryJob(jobId: string, dependencies: Partial<KnowledgeQueryProcessorDependencies> = {}): Promise<void> {
   const resolved = resolvedDependencies(dependencies);
   const leaseId = crypto.randomUUID();
@@ -567,10 +578,19 @@ export async function processKnowledgeQueryJob(jobId: string, dependencies: Part
         },
       },
     });
+    const citations = assembleCitations(matches, sourceIndexes, query.workspaceId, query.indexRevision, MAX_QUERY_RESULTS);
+    const ranked = await resolved.rerank({
+      classification: rerankingClassification(query.dataClassification, sourceIndexes),
+      query: query.queryText,
+      items: citations,
+      text: (citation) => citation.text,
+      signal: leaseController.signal,
+    });
+    leaseController.signal.throwIfAborted();
     const result: KnowledgeQueryResult = {
       indexId: job.indexId,
       indexRevision: query.indexRevision,
-      citations: assembleCitations(matches, sourceIndexes, query.workspaceId, query.indexRevision, topK),
+      citations: ranked.slice(0, topK),
     };
     await finishSucceeded(resolved.store, job.id, query.id, leaseId, result, resolved.now());
   } catch (error) {

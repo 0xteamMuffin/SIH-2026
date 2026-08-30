@@ -9,6 +9,7 @@ import {
 import { embedTexts, type EmbeddingVector } from "../../infrastructure/embeddings/embedding-provider.js";
 import { selectEmbeddingProfile } from "../../infrastructure/embeddings/embedding-profile-resolver.js";
 import type { EmbeddingModelProfile } from "../../infrastructure/models/model-registry.js";
+import { rerankIfConfigured, type OptionalReranker } from "../../infrastructure/models/reranking-provider.js";
 import { getQdrantDataPlane } from "../../infrastructure/vector-store/qdrant-data-plane.js";
 import type { VectorPayload, VectorQueryMatch, VectorStoreDataPlane } from "../../infrastructure/vector-store/vector-store-data-plane.js";
 import { allowsExternalInference } from "../../lib/data-classification.js";
@@ -34,6 +35,7 @@ export type AgentKnowledgeSearchDependencies = {
   vectorStore: Pick<VectorStoreDataPlane, "queryPoints">;
   resolveEmbeddingProfile: (classification: DataClassification) => EmbeddingModelProfile;
   embed: (profile: EmbeddingModelProfile, classification: DataClassification, inputs: readonly string[], signal?: AbortSignal) => Promise<EmbeddingVector[]>;
+  rerank: OptionalReranker;
 };
 
 type SourceIndex = {
@@ -138,7 +140,6 @@ function assembleCitations(matches: VectorQueryMatch[], sourceIndexes: SourceInd
       sourceRef: sourceRef(source.artifact.id, match.payload),
       score: match.score,
     });
-    if (citations.length === MAX_CITATIONS) break;
   }
   return citations;
 }
@@ -151,6 +152,7 @@ export async function searchAgentKnowledge(
   const vectorStore = dependencies.vectorStore ?? getQdrantDataPlane();
   const resolveEmbeddingProfile = dependencies.resolveEmbeddingProfile ?? selectEmbeddingProfile;
   const embed = dependencies.embed ?? embedTexts;
+  const rerank = dependencies.rerank ?? rerankIfConfigured;
   const index = await store.knowledgeIndex.findFirst({
     where: { status: KnowledgeIndexStatus.ACTIVE },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -228,5 +230,7 @@ export async function searchAgentKnowledge(
       },
     },
   });
-  return assembleCitations(matches, sourceIndexes, input.workspaceId, index.revision);
+  const citations = assembleCitations(matches, sourceIndexes, input.workspaceId, index.revision);
+  const ranked = await rerank({ classification: input.classification, query: input.query, items: citations, text: (citation) => citation.text, signal: input.signal });
+  return ranked.slice(0, MAX_CITATIONS);
 }

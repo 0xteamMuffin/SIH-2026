@@ -49,6 +49,7 @@ describe("application boundary", () => {
     expect((await request(application).get("/health")).status).toBe(200);
     expect((await request(application).get("/ready")).status).toBe(401);
     expect((await request(application).get("/metrics")).status).toBe(401);
+    expect((await request(application).get("/api/admin/model-providers/status")).status).toBe(401);
   });
 
   it("serves Prometheus exposition after operational authorization", async () => {
@@ -62,6 +63,16 @@ describe("application boundary", () => {
     expect(response.headers["content-type"]).toContain("text/plain");
     expect(response.text).toContain("workbench_test 1");
     expect(metrics.metrics).toHaveBeenCalledOnce();
+  });
+
+  it("serves content-free model provider status after operational authorization", async () => {
+    const status = { checkedAt: "2026-08-30T12:00:00.000Z", providers: [] };
+    const modelProviderStatus = vi.fn().mockResolvedValue(status);
+    const response = await request(createApp({ operationalAuth: [allowOperationalAccess], modelProviderStatus })).get("/api/admin/model-providers/status");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(status);
+    expect(modelProviderStatus).toHaveBeenCalledOnce();
   });
 
   it("preserves a valid incoming request ID", async () => {

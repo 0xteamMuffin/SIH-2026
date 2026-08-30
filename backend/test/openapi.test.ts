@@ -38,7 +38,7 @@ describe("OpenAPI contract", () => {
     expect(response.type).toBe("application/json");
     expect(response.body).toEqual(openApiDocument);
     expect(response.body.openapi).toBe("3.1.0");
-    expect(response.body.info.version).toBe("0.2.0");
+    expect(response.body.info.version).toBe("0.3.0");
   });
 
   it("is structurally valid OpenAPI 3.1", async () => {

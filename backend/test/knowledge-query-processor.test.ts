@@ -305,6 +305,23 @@ describe("knowledge query processor", () => {
     }));
   });
 
+  it("optionally reranks only authorized citations before applying topK", async () => {
+    const sourceId = "70000000-0000-4000-8000-000000000031";
+    const artifactId = "80000000-0000-4000-8000-000000000031";
+    const matches = [
+      match({ pointId: "vector-first", sourceId, artifactId, workspace: workspaceId, scope: `workspace:${workspaceId}`, score: 0.9 }),
+      match({ pointId: "reranked-first", sourceId, artifactId, workspace: workspaceId, scope: `workspace:${workspaceId}`, score: 0.8 }),
+    ];
+    const { store, dependencies } = setup(matches, [sourceIndex({ sourceId, artifactId, visibility: KnowledgeVisibility.WORKSPACE_PRIVATE })]);
+    const rerank = vi.fn(async ({ items }) => [...items].reverse());
+    dependencies.rerank = rerank;
+
+    await processKnowledgeQueryJob(jobId, dependencies);
+
+    expect(rerank).toHaveBeenCalledWith(expect.objectContaining({ classification: DataClassification.INTERNAL, query: query.queryText }));
+    expect(succeededResult(store).citations.map((citation: { pointId: string }) => citation.pointId)).toEqual(["reranked-first", "vector-first"]);
+  });
+
   it("throws and lease-fenced resets job and query state after a transient embedding failure", async () => {
     const { store, vectorStore, dependencies } = setup([], []);
     const providerError = new AppError(502, "Embedding provider is unavailable", "EMBEDDING_PROVIDER_UNAVAILABLE");

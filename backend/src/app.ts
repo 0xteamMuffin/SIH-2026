@@ -11,8 +11,9 @@ import { mountApiRateLimits, mountRequestHardening } from "./middleware/request-
 import { authenticate, requireRole } from "./middleware/auth.js";
 import { metricsRegistry, observeRequests } from "./modules/observability/metrics.js";
 import { checkReadiness, type ReadinessResult } from "./modules/observability/readiness.js";
+import { probeModelProviders, type ModelProviderStatusResult } from "./infrastructure/models/model-provider-status.js";
 
-const API_VERSION = "0.2.0";
+const API_VERSION = "0.3.0";
 const OPENAPI_VERSION = "3.1.0";
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const responseRef = (name: string) => ({ $ref: `#/components/responses/${name}` });
@@ -90,6 +91,20 @@ export const openApiDocument = {
             headers: { "X-Request-ID": { $ref: "#/components/headers/RequestId" } },
             content: { "text/plain": { schema: { type: "string" } } },
           },
+          "401": responseRef("Unauthorized"),
+          "403": responseRef("Forbidden"),
+          "500": responseRef("InternalError"),
+        },
+      },
+    },
+    "/api/admin/model-providers/status": {
+      get: {
+        operationId: "getModelProviderStatus",
+        summary: "Probe configured model providers",
+        description: "Requires the global ADMIN role. Probes OpenAI-compatible model catalogs without sending user content.",
+        tags: ["System"],
+        responses: {
+          "200": jsonResponse("Current provider and configured model availability.", ref("ModelProviderStatusResult")),
           "401": responseRef("Unauthorized"),
           "403": responseRef("Forbidden"),
           "500": responseRef("InternalError"),
@@ -1195,8 +1210,47 @@ export const openApiDocument = {
           profileId: { type: "string" }, modelId: { type: "string" }, attempt: { type: "integer" },
           status: { type: "string", enum: ["RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"] }, latencyMs: { type: ["integer", "null"] },
           promptTokens: { type: ["integer", "null"] }, completionTokens: { type: ["integer", "null"] }, totalTokens: { type: ["integer", "null"] },
+          estimatedCostMicros: { type: ["integer", "null"], minimum: 0 }, pricingVersion: { type: ["string", "null"] }, pricingCurrency: { type: ["string", "null"] },
           finishReason: { type: ["string", "null"] }, sanitizedError: { type: ["string", "null"] },
           startedAt: { type: "string", format: "date-time" }, completedAt: { type: ["string", "null"], format: "date-time" },
+        },
+      },
+      ModelProviderStatusResult: {
+        type: "object",
+        additionalProperties: false,
+        required: ["checkedAt", "providers"],
+        properties: {
+          checkedAt: { type: "string", format: "date-time" },
+          providers: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["providerId", "location", "status", "capabilities", "availableCapabilities", "profiles"],
+              properties: {
+                providerId: { type: "string" },
+                location: { type: "string", enum: ["local", "remote"] },
+                status: { type: "string", enum: ["available", "degraded", "unavailable", "not_configured", "disabled"] },
+                capabilities: { type: "array", items: { type: "string", enum: ["general", "document", "vision", "code", "embedding", "reranking"] } },
+                availableCapabilities: { type: "array", items: { type: "string", enum: ["general", "document", "vision", "code", "embedding", "reranking"] } },
+                profiles: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["profileId", "modelId", "capabilities", "available"],
+                    properties: {
+                      profileId: { type: "string" }, modelId: { type: "string" },
+                      capabilities: { type: "array", items: { type: "string", enum: ["general", "document", "vision", "code", "embedding", "reranking"] } },
+                      available: { type: ["boolean", "null"] },
+                    },
+                  },
+                },
+                latencyMs: { type: "integer", minimum: 0 },
+                errorCode: { type: "string", enum: ["PROBE_REQUEST_FAILED", "PROBE_RESPONSE_INVALID"] },
+              },
+            },
+          },
         },
       },
       Evidence: {
@@ -1317,12 +1371,14 @@ export const openApiDocument = {
 
 type ApplicationDependencies = {
   readiness: () => Promise<ReadinessResult>;
+  modelProviderStatus: () => Promise<ModelProviderStatusResult>;
   operationalAuth: RequestHandler[];
   metrics: Pick<typeof metricsRegistry, "contentType" | "metrics">;
 };
 
 const defaultDependencies: ApplicationDependencies = {
   readiness: checkReadiness,
+  modelProviderStatus: probeModelProviders,
   operationalAuth: [authenticate, requireRole("ADMIN")],
   metrics: metricsRegistry,
 };
@@ -1353,6 +1409,13 @@ export function createApp(overrides: Partial<ApplicationDependencies> = {}) {
   application.get("/metrics", ...dependencies.operationalAuth, async (_request, response, next) => {
     try {
       response.type(dependencies.metrics.contentType).send(await dependencies.metrics.metrics());
+    } catch (error) {
+      next(error);
+    }
+  });
+  application.get("/api/admin/model-providers/status", ...dependencies.operationalAuth, async (_request, response, next) => {
+    try {
+      response.json(await dependencies.modelProviderStatus());
     } catch (error) {
       next(error);
     }

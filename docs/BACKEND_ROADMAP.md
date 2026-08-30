@@ -33,13 +33,13 @@ Status: in progress
 - [x] Replace hard-coded profiles with a validated model registry.
 - [x] Support multiple OpenRouter and local OpenAI-compatible models per capability.
 - [x] Route general, document, vision, code, and embedding workloads independently.
-- [ ] Add a dedicated reranking workload and provider boundary.
+- [x] Add a dedicated optional reranking workload and provider boundary.
 - [x] Add deterministic priorities and ordered fallback execution across eligible profiles.
 - [x] Add provider timeouts, cancellation signals, bounded provider-failure retries, and normalized failures.
 - [x] Persist provider, profile, model, attempt status, latency, token usage, finish reason, and sanitized failures.
 - [x] Send bounded PNG, JPEG, and WEBP originals with extraction text to vision profiles without persisting image payloads.
-- [ ] Persist estimated invocation cost from versioned provider pricing metadata.
-- [ ] Add provider capability and availability probes without sending document content.
+- [x] Persist estimated invocation cost from versioned provider pricing metadata.
+- [x] Add provider capability and availability probes without sending document content.
 
 Acceptance gate: at least two task capabilities select different configured models, provider failures follow policy, and confidential data cannot reach an external provider.
 
@@ -80,7 +80,7 @@ Status: pending
 - [x] Add workspace-Admin soft deletion with an enforced run relation, transactional outbox job, retry-safe MinIO/Qdrant cleanup, and stale-job reconciliation while retaining audit metadata.
 - [x] Integrate local UTF-8 and internal Docling extraction for PDF, image, DOCX, PPTX, XLSX, CSV, Markdown, and text.
 - [x] Run OCR for PDF/image inputs and preserve Docling's layout-aware Markdown structure.
-- [ ] Persist granular page, table, image, slide, and sheet location metadata for citation assembly.
+- [x] Persist bounded granular page, table, picture, heading, bounding-box, line, and character provenance for citation assembly.
 - [x] Render and deterministically select bounded PDF pages for vision inference through the isolated internal renderer.
 - [x] Store canonical extracted content and checksums in MinIO with retry-safe lifecycle metadata.
 - [x] Reconcile expired artifact-deletion claims and safely repeat physical object cleanup.

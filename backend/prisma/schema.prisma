@@ -235,39 +235,42 @@ model WorkspaceMember {
 }
 
 model Artifact {
-  id                  String                   @id @default(uuid()) @db.Uuid
-  workspaceId         String                   @map("workspace_id") @db.Uuid
-  createdBy           String                   @map("created_by") @db.Uuid
-  kind                ArtifactKind
-  classification      DataClassification       @default(INTERNAL)
-  sha256              String?
-  detectedMimeType    String?                  @map("detected_mime_type")
-  extractionStatus    ArtifactExtractionStatus @default(NOT_REQUIRED) @map("extraction_status")
-  extractedObjectKey  String?                  @map("extracted_object_key")
-  extractionMetadata  Json?                    @map("extraction_metadata")
-  extractionError     String?                  @map("extraction_error")
-  extractionStartedAt DateTime?                @map("extraction_started_at")
-  extractedAt         DateTime?                @map("extracted_at")
-  filename            String
-  mimeType            String                   @map("mime_type")
-  objectKey           String                   @unique @map("object_key")
-  sizeBytes           BigInt                   @map("size_bytes")
-  versionSetId        String                   @map("version_set_id") @db.Uuid
-  version             Int                      @default(1)
-  previousVersionId   String?                  @unique @map("previous_version_id") @db.Uuid
-  lifecycleStatus     ArtifactLifecycleStatus  @default(ACTIVE) @map("lifecycle_status")
-  retentionUntil      DateTime?                @map("retention_until")
-  deletionRequestedAt DateTime?                @map("deletion_requested_at")
-  deletedAt           DateTime?                @map("deleted_at")
-  createdAt           DateTime                 @default(now()) @map("created_at")
-  workspace           Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  creator             User                     @relation(fields: [createdBy], references: [id])
-  evidence            Evidence[]
-  knowledgeSource     KnowledgeSource?
-  sourceRuns          AgentRun[]               @relation("AgentRunSourceArtifact")
-  previousVersion     Artifact?                @relation("ArtifactVersions", fields: [previousVersionId], references: [id], onDelete: Restrict)
-  nextVersion         Artifact?                @relation("ArtifactVersions")
-  deletionJob         ArtifactDeletionJob?
+  id                                String                   @id @default(uuid()) @db.Uuid
+  workspaceId                       String                   @map("workspace_id") @db.Uuid
+  createdBy                         String                   @map("created_by") @db.Uuid
+  kind                              ArtifactKind
+  classification                    DataClassification       @default(INTERNAL)
+  sha256                            String?
+  detectedMimeType                  String?                  @map("detected_mime_type")
+  extractionStatus                  ArtifactExtractionStatus @default(NOT_REQUIRED) @map("extraction_status")
+  extractedObjectKey                String?                  @map("extracted_object_key")
+  extractionProvenanceObjectKey     String?                  @map("extraction_provenance_object_key")
+  extractionProvenanceSha256        String?                  @map("extraction_provenance_sha256")
+  extractionProvenanceSchemaVersion Int?                     @map("extraction_provenance_schema_version")
+  extractionMetadata                Json?                    @map("extraction_metadata")
+  extractionError                   String?                  @map("extraction_error")
+  extractionStartedAt               DateTime?                @map("extraction_started_at")
+  extractedAt                       DateTime?                @map("extracted_at")
+  filename                          String
+  mimeType                          String                   @map("mime_type")
+  objectKey                         String                   @unique @map("object_key")
+  sizeBytes                         BigInt                   @map("size_bytes")
+  versionSetId                      String                   @map("version_set_id") @db.Uuid
+  version                           Int                      @default(1)
+  previousVersionId                 String?                  @unique @map("previous_version_id") @db.Uuid
+  lifecycleStatus                   ArtifactLifecycleStatus  @default(ACTIVE) @map("lifecycle_status")
+  retentionUntil                    DateTime?                @map("retention_until")
+  deletionRequestedAt               DateTime?                @map("deletion_requested_at")
+  deletedAt                         DateTime?                @map("deleted_at")
+  createdAt                         DateTime                 @default(now()) @map("created_at")
+  workspace                         Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator                           User                     @relation(fields: [createdBy], references: [id])
+  evidence                          Evidence[]
+  knowledgeSource                   KnowledgeSource?
+  sourceRuns                        AgentRun[]               @relation("AgentRunSourceArtifact")
+  previousVersion                   Artifact?                @relation("ArtifactVersions", fields: [previousVersionId], references: [id], onDelete: Restrict)
+  nextVersion                       Artifact?                @relation("ArtifactVersions")
+  deletionJob                       ArtifactDeletionJob?
 
   @@unique([versionSetId, version])
   @@index([workspaceId, extractionStatus])
@@ -339,22 +342,25 @@ model AgentRun {
 }
 
 model ModelInvocation {
-  id               String                @id @default(uuid()) @db.Uuid
-  runId            String                @map("run_id") @db.Uuid
-  providerId       String                @map("provider_id")
-  profileId        String                @map("profile_id")
-  modelId          String                @map("model_id")
-  attempt          Int
-  status           ModelInvocationStatus @default(RUNNING)
-  latencyMs        Int?                  @map("latency_ms")
-  promptTokens     Int?                  @map("prompt_tokens")
-  completionTokens Int?                  @map("completion_tokens")
-  totalTokens      Int?                  @map("total_tokens")
-  finishReason     String?               @map("finish_reason")
-  sanitizedError   String?               @map("sanitized_error")
-  startedAt        DateTime              @default(now()) @map("started_at")
-  completedAt      DateTime?             @map("completed_at")
-  run              AgentRun              @relation(fields: [runId], references: [id], onDelete: Cascade)
+  id                  String                @id @default(uuid()) @db.Uuid
+  runId               String                @map("run_id") @db.Uuid
+  providerId          String                @map("provider_id")
+  profileId           String                @map("profile_id")
+  modelId             String                @map("model_id")
+  attempt             Int
+  status              ModelInvocationStatus @default(RUNNING)
+  latencyMs           Int?                  @map("latency_ms")
+  promptTokens        Int?                  @map("prompt_tokens")
+  completionTokens    Int?                  @map("completion_tokens")
+  totalTokens         Int?                  @map("total_tokens")
+  estimatedCostMicros Int?                  @map("estimated_cost_micros")
+  pricingVersion      String?               @map("pricing_version")
+  pricingCurrency     String?               @map("pricing_currency")
+  finishReason        String?               @map("finish_reason")
+  sanitizedError      String?               @map("sanitized_error")
+  startedAt           DateTime              @default(now()) @map("started_at")
+  completedAt         DateTime?             @map("completed_at")
+  run                 AgentRun              @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@unique([runId, attempt])
   @@index([runId, startedAt])

@@ -8,6 +8,18 @@ export const modelCapabilities = ["general", "document", "vision", "code", "embe
 export type ModelCapability = typeof modelCapabilities[number];
 export type TaskCapability = Extract<ModelCapability, "general" | "document" | "vision" | "code">;
 export type ProviderLocation = "local" | "remote";
+export type ProviderConfiguration = {
+  id: string;
+  location: ProviderLocation;
+  baseUrl: string;
+  apiKeyEnv?: string;
+};
+export type ModelPricing = {
+  version: string;
+  currency: "USD";
+  inputPerMillionTokens: number;
+  outputPerMillionTokens: number;
+};
 export const embeddingInputModalities = ["TEXT", "IMAGE"] as const;
 export type EmbeddingInputModality = typeof embeddingInputModalities[number];
 export const embeddingDistances = ["cosine", "euclid", "dot", "manhattan"] as const;
@@ -32,6 +44,10 @@ export type ModelProfile = {
   maxBatchCharacters?: number;
   maxInputCharacters?: number;
   inputModalities?: EmbeddingInputModality[];
+  maxDocuments?: number;
+  maxDocumentCharacters?: number;
+  maxQueryCharacters?: number;
+  pricing?: ModelPricing;
 };
 
 export type EmbeddingModelProfile = ModelProfile & EmbeddingProfile & {
@@ -40,7 +56,18 @@ export type EmbeddingModelProfile = ModelProfile & EmbeddingProfile & {
   inputModalities: EmbeddingInputModality[];
 };
 
+export type RerankingModelProfile = ModelProfile & {
+  revision: string;
+  maxDocuments: number;
+  maxDocumentCharacters: number;
+  maxQueryCharacters: number;
+  maxBatchCharacters: number;
+};
+
+export type ModelConfiguration = { providers: ProviderConfiguration[]; profiles: ModelProfile[] };
+
 const positiveSafeInteger = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const nonnegativeFiniteNumber = z.number().finite().nonnegative().max(10_000);
 
 const providerSchema = z.object({
   id: z.string().min(1).regex(/^[a-z0-9][a-z0-9._-]*$/i),
@@ -67,17 +94,46 @@ const modelSchema = z.object({
   inputModalities: z.array(z.enum(embeddingInputModalities)).min(1)
     .refine((modalities) => new Set(modalities).size === modalities.length, "Input modalities must be unique")
     .optional(),
+  maxDocuments: positiveSafeInteger.optional(),
+  maxDocumentCharacters: positiveSafeInteger.optional(),
+  maxQueryCharacters: positiveSafeInteger.optional(),
+  pricing: z.object({
+    version: z.string().min(1),
+    currency: z.literal("USD"),
+    inputPerMillionTokens: nonnegativeFiniteNumber,
+    outputPerMillionTokens: nonnegativeFiniteNumber,
+  }).strict().optional(),
 }).superRefine((model, context) => {
-  if (!model.capabilities.includes("embedding")) return;
-
-  const requiredFields = ["revision", "dimensions", "distance", "maxBatchInputs", "maxBatchCharacters", "maxInputCharacters", "inputModalities"] as const;
-  for (const field of requiredFields) {
-    if (model[field] === undefined) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: `Embedding profile requires '${field}'`, path: [field] });
+  if (model.capabilities.includes("embedding")) {
+    const requiredFields = ["revision", "dimensions", "distance", "maxBatchInputs", "maxBatchCharacters", "maxInputCharacters", "inputModalities"] as const;
+    for (const field of requiredFields) {
+      if (model[field] === undefined) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: `Embedding profile requires '${field}'`, path: [field] });
+      }
+    }
+    if (model.maxInputCharacters !== undefined && model.maxBatchCharacters !== undefined && model.maxInputCharacters > model.maxBatchCharacters) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "maxInputCharacters cannot exceed maxBatchCharacters", path: ["maxInputCharacters"] });
     }
   }
-  if (model.maxInputCharacters !== undefined && model.maxBatchCharacters !== undefined && model.maxInputCharacters > model.maxBatchCharacters) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "maxInputCharacters cannot exceed maxBatchCharacters", path: ["maxInputCharacters"] });
+
+  if (model.capabilities.includes("reranking")) {
+    const requiredFields = ["revision", "maxDocuments", "maxDocumentCharacters", "maxQueryCharacters", "maxBatchCharacters"] as const;
+    for (const field of requiredFields) {
+      if (model[field] === undefined) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: `Reranking profile requires '${field}'`, path: [field] });
+      }
+    }
+    if (model.maxDocumentCharacters !== undefined && model.maxBatchCharacters !== undefined && model.maxDocumentCharacters > model.maxBatchCharacters) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "maxDocumentCharacters cannot exceed maxBatchCharacters", path: ["maxDocumentCharacters"] });
+    }
+  }
+
+  if (model.modelId.endsWith(":free") || model.modelId === "openrouter/free") {
+    if (!model.pricing) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Free model profiles require versioned zero pricing", path: ["pricing"] });
+    } else if (model.pricing.inputPerMillionTokens !== 0 || model.pricing.outputPerMillionTokens !== 0) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Free model profile pricing must be zero", path: ["pricing"] });
+    }
   }
 });
 
@@ -98,7 +154,7 @@ const configurationSchema = z.object({
   }
 });
 
-export function parseModelConfiguration(input: string): ModelProfile[] {
+export function parseModelRegistry(input: string): ModelConfiguration {
   let value: unknown;
   try {
     value = JSON.parse(input);
@@ -106,17 +162,30 @@ export function parseModelConfiguration(input: string): ModelProfile[] {
     throw new Error("Model configuration must contain valid JSON");
   }
   const configuration = configurationSchema.parse(value);
-  const providers = new Map(configuration.providers.map((provider) => [provider.id, provider]));
-  return configuration.models.map((model) => {
-    const provider = providers.get(model.providerId)!;
-    const baseUrl = provider.baseUrl ?? (provider.baseUrlEnv ? process.env[provider.baseUrlEnv] : undefined) ?? "";
-    return { ...model, location: provider.location, baseUrl: baseUrl.replace(/\/$/, ""), apiKeyEnv: provider.apiKeyEnv, sovereign: provider.location === "local" };
+  const resolvedProviders = configuration.providers.map((provider) => ({
+    id: provider.id,
+    location: provider.location,
+    baseUrl: (provider.baseUrl ?? (provider.baseUrlEnv ? process.env[provider.baseUrlEnv] : undefined) ?? "").replace(/\/$/, ""),
+    apiKeyEnv: provider.apiKeyEnv,
+  }));
+  const resolvedById = new Map(resolvedProviders.map((provider) => [provider.id, provider]));
+  const profiles = configuration.models.map((model) => {
+    const provider = resolvedById.get(model.providerId)!;
+    return { ...model, location: provider.location, baseUrl: provider.baseUrl, apiKeyEnv: provider.apiKeyEnv, sovereign: provider.location === "local" };
   });
+  return { providers: resolvedProviders, profiles };
+}
+
+export function parseModelConfiguration(input: string): ModelProfile[] {
+  return parseModelRegistry(input).profiles;
+}
+
+export function modelConfiguration(): ModelConfiguration {
+  return parseModelRegistry(readFileSync(resolve(env.MODEL_CONFIG_PATH), "utf8"));
 }
 
 export function modelProfiles(): ModelProfile[] {
-  const path = resolve(env.MODEL_CONFIG_PATH);
-  const profiles = parseModelConfiguration(readFileSync(path, "utf8"))
+  const profiles = modelConfiguration().profiles
     .filter((profile) => profile.enabled && (profile.location === "local" || env.ALLOW_REMOTE_INFERENCE))
     .filter((profile) => Boolean(profile.baseUrl) && (!profile.apiKeyEnv || Boolean(process.env[profile.apiKeyEnv])))
     .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
