@@ -6,6 +6,7 @@ const { auditMock, agentRunMock, outboxEventMock, transactionMock } = vi.hoisted
   agentRunMock: {
     create: vi.fn(),
     findFirst: vi.fn(),
+    findUnique: vi.fn(),
     findUniqueOrThrow: vi.fn(),
     updateMany: vi.fn(),
   },
@@ -16,7 +17,7 @@ const { auditMock, agentRunMock, outboxEventMock, transactionMock } = vi.hoisted
 vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock, outboxEvent: outboxEventMock, $transaction: transactionMock } }));
 vi.mock("../src/lib/audit.js", () => ({ audit: auditMock }));
 
-import { cancelRun, createRun, getRun } from "../src/modules/agent/agent.service.js";
+import { cancelRun, createRun, getRun, processRun } from "../src/modules/agent/agent.service.js";
 
 describe("agent run access", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -30,8 +31,17 @@ describe("agent run access", () => {
     await expect(createRun({ workspaceId: "workspace-1", userId: "user-1", task: "Summarize the public report", dataClassification: DataClassification.PUBLIC })).resolves.toEqual(run);
 
     expect(transactionMock).toHaveBeenCalledOnce();
-    expect(outboxEventMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ topic: "agent.run.requested", aggregateId: expect.any(String) }) });
+    expect(agentRunMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ sourceArtifactId: undefined }) });
+    expect(outboxEventMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ topic: "agent.run.requested", aggregateId: expect.any(String), payload: { runId: expect.any(String) } }) });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ runId: "run-1", eventType: "AGENT_RUN_CREATED" }));
+  });
+
+  it("treats a duplicate delivery for a terminal run as a no-op", async () => {
+    agentRunMock.findUnique.mockResolvedValue({ id: "run-1", status: RunStatus.COMPLETED });
+
+    await expect(processRun("run-1")).resolves.toBeUndefined();
+
+    expect(agentRunMock.updateMany).not.toHaveBeenCalled();
   });
 
   it("scopes operator reads to workspace membership", async () => {

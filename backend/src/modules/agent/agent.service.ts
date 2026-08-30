@@ -5,7 +5,8 @@ import { audit } from "../../lib/audit.js";
 import { AppError } from "../../lib/errors.js";
 import { allowsExternalInference, mostRestrictiveClassification } from "../../lib/data-classification.js";
 import { askModel } from "../../infrastructure/models/model-provider.js";
-import { selectModel, type RoutingDecision } from "../../infrastructure/models/model-router.js";
+import { selectModel, type RoutingDecision, type TaskCapability } from "../../infrastructure/models/model-router.js";
+import { modelProfiles } from "../../infrastructure/models/model-registry.js";
 import { runCode } from "../../infrastructure/sandbox/sandbox-client.js";
 import { createArtifact, findArtifact, getArtifact } from "../artifacts/artifacts.service.js";
 import { approvalNoteDocx } from "./approval-note.js";
@@ -18,9 +19,12 @@ const toJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.I
 function previewText(bytes: Buffer) { return bytes.toString("utf8").replace(/\0/g, "").slice(0, 12_000).trim() || "The source is a binary or scanned file. OCR/vision review is required."; }
 async function appendMessage(runId: string, turn: number, role: string, content: object) { await prisma.runMessage.create({ data: { runId, turn, role, content: toJson(content) } }); }
 async function executeTool(runId: string, name: string, input: object, work: () => Promise<ToolResult>) {
-  const modelToolCallId = crypto.randomUUID();
   const idempotencyKey = crypto.createHash("sha256").update(`${name}:${JSON.stringify(input)}`).digest("hex");
-  await prisma.runToolCall.create({ data: { runId, modelToolCallId, toolName: name, input: toJson(input), idempotencyKey, status: "RUNNING" } });
+  const existing = await prisma.runToolCall.findUnique({ where: { runId_idempotencyKey: { runId, idempotencyKey } } });
+  if (existing?.status === "COMPLETED" && existing.output) return existing.output as unknown as ToolResult;
+  const modelToolCallId = existing?.modelToolCallId ?? crypto.randomUUID();
+  if (existing) await prisma.runToolCall.update({ where: { runId_modelToolCallId: { runId, modelToolCallId } }, data: { status: "RUNNING", startedAt: new Date(), completedAt: null } });
+  else await prisma.runToolCall.create({ data: { runId, modelToolCallId, toolName: name, input: toJson(input), idempotencyKey, status: "RUNNING" } });
   try {
     const result = await work();
     await prisma.runToolCall.update({ where: { runId_modelToolCallId: { runId, modelToolCallId } }, data: { status: result.ok ? "COMPLETED" : "FAILED", output: toJson(result), completedAt: new Date() } });
@@ -54,16 +58,30 @@ export async function createRun(input: { workspaceId: string; userId: string; ta
   }
   const runId = crypto.randomUUID();
   const [run] = await prisma.$transaction([
-    prisma.agentRun.create({ data: { id: runId, workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, activeWorkspaceId: input.workspaceId } }),
-    prisma.outboxEvent.create({ data: { topic: "agent.run.requested", aggregateId: runId, payload: toJson({ runId, sourceArtifactId: input.artifactId }) } }),
+    prisma.agentRun.create({ data: { id: runId, workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, sourceArtifactId: input.artifactId, activeWorkspaceId: input.workspaceId } }),
+    prisma.outboxEvent.create({ data: { topic: "agent.run.requested", aggregateId: runId, payload: toJson({ runId }) } }),
   ]);
   await audit({ actorId: input.userId, workspaceId: input.workspaceId, runId: run.id, eventType: "AGENT_RUN_CREATED", metadata: { capability: decision.capability, classification, modelProfile: decision.profile.id, sovereign: decision.profile.sovereign } });
   return run;
 }
-async function processRun(runId: string, decision: RoutingDecision, sourceArtifactId?: string) {
+function routingDecisionForRun(run: { taskCapability: string; modelProfile: string; modelReason: string; dataClassification: DataClassification }): RoutingDecision {
+  const capabilities: TaskCapability[] = ["general", "document", "vision", "code"];
+  if (!capabilities.includes(run.taskCapability as TaskCapability)) throw new Error(`Persisted task capability '${run.taskCapability}' is invalid`);
+  const capability = run.taskCapability as TaskCapability;
+  const profile = modelProfiles().find((item) => item.id === run.modelProfile);
+  if (!profile) throw new Error(`Persisted model profile '${run.modelProfile}' is unavailable under the current inference policy`);
+  if (!profile.capabilities.includes(capability)) throw new Error(`Model profile '${profile.id}' no longer supports '${capability}'`);
+  if (profile.location === "remote" && !allowsExternalInference(run.dataClassification)) throw new Error("Persisted run is not eligible for external inference");
+  return { capability, profile, fallbacks: [], reason: run.modelReason };
+}
+export async function processRun(runId: string) {
+  const persistedRun = await prisma.agentRun.findUnique({ where: { id: runId } });
+  if (!persistedRun || persistedRun.status !== RunStatus.PENDING) return;
+  const decision = routingDecisionForRun(persistedRun);
   const claimed = await prisma.agentRun.updateMany({ where: { id: runId, status: RunStatus.PENDING }, data: { status: RunStatus.RUNNING, startedAt: new Date() } });
   if (claimed.count === 0) return;
   const run = await prisma.agentRun.findUniqueOrThrow({ where: { id: runId } });
+  const sourceArtifactId = run.sourceArtifactId ?? undefined;
   let turn = 1;
   try {
     await appendMessage(run.id, turn, "system", { event: "RUN_STARTED", model: decision.profile.id, capability: decision.capability, maxTurns: MAX_TURNS, maxToolCalls: MAX_TOOL_CALLS });
@@ -79,7 +97,7 @@ async function processRun(runId: string, decision: RoutingDecision, sourceArtifa
     }
     let analysis = "No model analysis was required.";
     const analyzed = await executeTool(run.id, "model.analyze", { model: decision.profile.id, capability: decision.capability }, async () => { const model = await askModel(decision.profile, run.dataClassification, "You are an on-premise industrial workbench assistant. Produce concise factual findings only from supplied source text. State uncertainty for unreadable scans. Never invent measurements, approvals, or citations.", `Task: ${run.task}\n\nSource material:\n${sourceText}`); analysis = model.text.trim() || "The model returned no analysis."; return { ok: true, summary: "Model analysis completed", data: { characters: analysis.length } }; });
-    if (!analyzed.ok) analysis = `${analyzed.summary}. Review the source artifact manually.`;
+    if (!analyzed.ok) throw new Error(analyzed.summary);
     await appendMessage(run.id, ++turn, "tool", { tool: "model.analyze", result: analyzed });
     evidence.push(await saveEvidence(run.id, undefined, "model-analysis", "Model analysis", analysis, [analysis]));
     const result: Record<string, unknown> = { analysis, evidenceIds: evidence.map((item) => item.id), model: decision.profile.id, capability: decision.capability };
@@ -90,9 +108,17 @@ async function processRun(runId: string, decision: RoutingDecision, sourceArtifa
     if (completed.count > 0) await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId: run.id, eventType: "AGENT_RUN_COMPLETED", metadata: { sovereign: decision.profile.sovereign } });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "Unknown run failure";
-    const failed = await prisma.agentRun.updateMany({ where: { id: runId, status: RunStatus.RUNNING }, data: { status: RunStatus.FAILED, result: toJson({ error: reason }), activeWorkspaceId: null, completedAt: new Date() } });
-    if (failed.count > 0) await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId, eventType: "AGENT_RUN_FAILED", metadata: { reason } });
+    const released = await prisma.agentRun.updateMany({ where: { id: runId, status: RunStatus.RUNNING }, data: { status: RunStatus.PENDING, startedAt: null } });
+    if (released.count > 0) await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId, eventType: "AGENT_RUN_ATTEMPT_FAILED", metadata: { reason } });
+    throw error;
   }
+}
+export async function failRun(runId: string, error: unknown) {
+  const run = await prisma.agentRun.findUnique({ where: { id: runId } });
+  if (!run || (run.status !== RunStatus.PENDING && run.status !== RunStatus.RUNNING)) return;
+  const reason = error instanceof Error ? error.message : "Worker retries were exhausted";
+  const failed = await prisma.agentRun.updateMany({ where: { id: runId, status: { in: [RunStatus.PENDING, RunStatus.RUNNING] } }, data: { status: RunStatus.FAILED, result: toJson({ error: reason }), activeWorkspaceId: null, completedAt: new Date() } });
+  if (failed.count > 0) await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId, eventType: "AGENT_RUN_FAILED", metadata: { reason, exhausted: true } });
 }
 export async function getRun(runId: string, actor: Pick<AuthUser, "id" | "role">) {
   return prisma.agentRun.findFirst({ where: accessibleRunWhere(runId, actor), include: { messages: { orderBy: { createdAt: "asc" } }, toolCalls: { orderBy: { startedAt: "asc" } }, evidence: { orderBy: { createdAt: "asc" } } } });
