@@ -80,4 +80,16 @@ describe("model registry", () => {
     expect(decision.profile.id).toBe("local-general");
     expect(decision.reason).toContain("no longer eligible");
   });
+
+  it("excludes optional providers whose endpoint or credential is absent", () => {
+    const previous = env.ALLOW_REMOTE_INFERENCE;
+    env.ALLOW_REMOTE_INFERENCE = true;
+    try {
+      const profiles = modelProfiles();
+      expect(profiles.some((profile) => profile.providerId === "development-remote")).toBe(Boolean(process.env.REMOTE_MODEL_API_KEY));
+      expect(profiles.some((profile) => profile.providerId === "cloudflare")).toBe(Boolean(process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_AI_BASE_URL));
+    } finally {
+      env.ALLOW_REMOTE_INFERENCE = previous;
+    }
+  });
 });

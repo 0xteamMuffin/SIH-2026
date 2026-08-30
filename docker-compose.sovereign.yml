@@ -4,12 +4,22 @@ services:
       APP_MODE: sovereign
       ALLOW_REMOTE_INFERENCE: "false"
       REMOTE_MODEL_API_KEY: !reset null
+      GROQ_API_KEY: !reset null
+      GEMINI_API_KEY: !reset null
+      MISTRAL_API_KEY: !reset null
+      CLOUDFLARE_API_TOKEN: !reset null
+      CLOUDFLARE_AI_BASE_URL: !reset null
   worker:
     networks: !override [internal]
     environment:
       APP_MODE: sovereign
       ALLOW_REMOTE_INFERENCE: "false"
       REMOTE_MODEL_API_KEY: !reset null
+      GROQ_API_KEY: !reset null
+      GEMINI_API_KEY: !reset null
+      MISTRAL_API_KEY: !reset null
+      CLOUDFLARE_API_TOKEN: !reset null
+      CLOUDFLARE_AI_BASE_URL: !reset null
 
 networks:
   internal:

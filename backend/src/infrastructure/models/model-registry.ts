@@ -25,9 +25,10 @@ export type ModelProfile = {
 const providerSchema = z.object({
   id: z.string().min(1).regex(/^[a-z0-9][a-z0-9._-]*$/i),
   location: z.enum(["local", "remote"]),
-  baseUrl: z.string().url(),
+  baseUrl: z.string().url().optional(),
+  baseUrlEnv: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
   apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
-});
+}).refine((provider) => Boolean(provider.baseUrl) !== Boolean(provider.baseUrlEnv), { message: "Exactly one of baseUrl or baseUrlEnv is required" });
 
 const modelSchema = z.object({
   id: z.string().min(1).regex(/^[a-z0-9][a-z0-9._-]*$/i),
@@ -67,7 +68,8 @@ export function parseModelConfiguration(input: string): ModelProfile[] {
   const providers = new Map(configuration.providers.map((provider) => [provider.id, provider]));
   return configuration.models.map((model) => {
     const provider = providers.get(model.providerId)!;
-    return { ...model, location: provider.location, baseUrl: provider.baseUrl.replace(/\/$/, ""), apiKeyEnv: provider.apiKeyEnv, sovereign: provider.location === "local" };
+    const baseUrl = provider.baseUrl ?? (provider.baseUrlEnv ? process.env[provider.baseUrlEnv] : undefined) ?? "";
+    return { ...model, location: provider.location, baseUrl: baseUrl.replace(/\/$/, ""), apiKeyEnv: provider.apiKeyEnv, sovereign: provider.location === "local" };
   });
 }
 
@@ -75,6 +77,7 @@ export function modelProfiles(): ModelProfile[] {
   const path = resolve(env.MODEL_CONFIG_PATH);
   const profiles = parseModelConfiguration(readFileSync(path, "utf8"))
     .filter((profile) => profile.enabled && (profile.location === "local" || env.ALLOW_REMOTE_INFERENCE))
+    .filter((profile) => Boolean(profile.baseUrl) && (!profile.apiKeyEnv || Boolean(process.env[profile.apiKeyEnv])))
     .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
   if (profiles.length === 0) throw new Error("No enabled model profiles are available under the current inference policy");
   return profiles;

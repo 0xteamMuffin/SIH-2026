@@ -10,6 +10,30 @@
       "id": "local-runtime",
       "location": "local",
       "baseUrl": "http://host.docker.internal:11434/v1"
+    },
+    {
+      "id": "groq",
+      "location": "remote",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "apiKeyEnv": "GROQ_API_KEY"
+    },
+    {
+      "id": "gemini",
+      "location": "remote",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "apiKeyEnv": "GEMINI_API_KEY"
+    },
+    {
+      "id": "mistral",
+      "location": "remote",
+      "baseUrl": "https://api.mistral.ai/v1",
+      "apiKeyEnv": "MISTRAL_API_KEY"
+    },
+    {
+      "id": "cloudflare",
+      "location": "remote",
+      "baseUrlEnv": "CLOUDFLARE_AI_BASE_URL",
+      "apiKeyEnv": "CLOUDFLARE_API_TOKEN"
     }
   ],
   "models": [
@@ -61,6 +85,55 @@
       "modelId": "openrouter/free",
       "capabilities": ["general", "document", "vision", "code"],
       "priority": 100
+    },
+    {
+      "id": "groq-general",
+      "providerId": "groq",
+      "modelId": "openai/gpt-oss-120b",
+      "capabilities": ["general", "document"],
+      "priority": 200
+    },
+    {
+      "id": "groq-code",
+      "providerId": "groq",
+      "modelId": "qwen/qwen3.8-27b",
+      "capabilities": ["code"],
+      "priority": 200
+    },
+    {
+      "id": "gemini-general-vision",
+      "providerId": "gemini",
+      "modelId": "gemini-2.5-flash",
+      "capabilities": ["general", "document", "vision", "code"],
+      "priority": 300
+    },
+    {
+      "id": "mistral-general",
+      "providerId": "mistral",
+      "modelId": "mistral-small-latest",
+      "capabilities": ["general", "document", "code"],
+      "priority": 400
+    },
+    {
+      "id": "cloudflare-general",
+      "providerId": "cloudflare",
+      "modelId": "@cf/openai/gpt-oss-120b",
+      "capabilities": ["general", "document", "code"],
+      "priority": 500
+    },
+    {
+      "id": "cloudflare-vision",
+      "providerId": "cloudflare",
+      "modelId": "@cf/meta/llama-3.2-11b-vision-instruct",
+      "capabilities": ["vision"],
+      "priority": 500
+    },
+    {
+      "id": "cloudflare-embedding",
+      "providerId": "cloudflare",
+      "modelId": "@cf/baai/bge-m3",
+      "capabilities": ["embedding"],
+      "priority": 500
     },
     {
       "id": "local-general",
