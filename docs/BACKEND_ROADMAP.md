@@ -32,13 +32,14 @@ Status: in progress
 
 - [x] Replace hard-coded profiles with a validated model registry.
 - [x] Support multiple OpenRouter and local OpenAI-compatible models per capability.
-- [ ] Route general, document, vision, code, embedding, and reranking workloads independently.
+- [x] Route general, document, vision, code, and embedding workloads independently.
+- [ ] Add a dedicated reranking workload and provider boundary.
 - [x] Add deterministic priorities and ordered fallback execution across eligible profiles.
 - [x] Add provider timeouts, cancellation signals, bounded provider-failure retries, and normalized failures.
 - [x] Persist provider, profile, model, attempt status, latency, token usage, finish reason, and sanitized failures.
 - [x] Send bounded PNG, JPEG, and WEBP originals with extraction text to vision profiles without persisting image payloads.
 - [ ] Persist estimated invocation cost from versioned provider pricing metadata.
-- [ ] Add capability and availability checks without sending document content.
+- [ ] Add provider capability and availability probes without sending document content.
 
 Acceptance gate: at least two task capabilities select different configured models, provider failures follow policy, and confidential data cannot reach an external provider.
 
@@ -49,7 +50,7 @@ Status: in progress
 - [x] Add RabbitMQ with durable exchanges, queues, publisher confirms, and manual acknowledgements.
 - [x] Move agent processing from the API process into a dedicated worker.
 - [x] Make enqueueing idempotent and recover database/queue inconsistencies.
-- [ ] Add bounded retries, backoff, timeouts, progress events, and failure reasons.
+- [x] Add bounded retries, backoff, timeouts, progress events, and failure reasons.
 - [x] Implement real cancellation using worker and tool abort signals.
 - [x] Recover or fail stale runs after worker restarts.
 - [x] Enforce global, workspace, and user concurrency limits.
@@ -60,11 +61,11 @@ Acceptance gate: queued work survives API restarts, cancellation stops active pr
 
 Status: in progress
 
-- [ ] Add refresh sessions, logout, revocation, and disabled-user checks.
-- [ ] Add Admin-managed users and workspace memberships.
-- [ ] Enforce Admin, Operator, and Reviewer permissions at service boundaries.
-- [ ] Add login throttling and failed-authentication auditing.
-- [ ] Add reviewer decisions and comments for approval-gated actions.
+- [x] Add refresh sessions, logout, revocation, and disabled-user checks.
+- [x] Add Admin-managed users and workspace memberships.
+- [x] Enforce Admin, Operator, and Reviewer permissions at service boundaries.
+- [x] Add login throttling and failed-authentication auditing.
+- [x] Add reviewer decisions and comments for approval-gated actions.
 - [ ] Keep the identity boundary ready for a future OIDC adapter.
 
 Acceptance gate: every protected resource is tenant-scoped, revoked sessions stop working, and role tests cover allowed and denied operations.
@@ -100,7 +101,7 @@ Status: in progress
 - [x] Add deterministic citation assembly.
 - [x] Add knowledge-source deletion, an explicit active-index rebuild, and periodic index reconciliation. Artifact cleanup removes vectors for already inactive sources.
 - [ ] Add zero-downtime model-version migration with replacement-index backfill before activation.
-- [ ] Build a small retrieval evaluation dataset from licensed public or synthetic documents.
+- [x] Build a small retrieval evaluation dataset from licensed public or synthetic documents.
 
 Acceptance gate: retrieval returns only authorized passages with resolvable citations and can rebuild Qdrant entirely from durable records.
 
@@ -122,13 +123,14 @@ Acceptance gate: a scanned-report workflow plans, retrieves, requests required a
 
 Status: pending
 
-- [ ] Support curated Python and JavaScript runtime images.
-- [ ] Replace bind-path assumptions with controlled input and output transfer.
-- [ ] Add authenticated asynchronous runner jobs and idempotent cancellation.
-- [ ] Enforce non-root users, no network, read-only roots, resource limits, bounded output, and immutable images.
-- [ ] Preload all runtime images and dependencies for air-gapped operation.
-- [ ] Add stale-container cleanup and execution audit records.
-- [ ] Document lower-assurance Windows development and isolated Linux production deployment.
+- [x] Support curated Python and JavaScript runtime images.
+- [x] Replace bind-path assumptions with controlled input and output transfer.
+- [x] Add authenticated asynchronous runner jobs and idempotent cancellation.
+- [x] Enforce non-root users, no network, read-only roots, resource limits, bounded output, and immutable images.
+- [x] Preload all runtime images and dependencies for air-gapped operation.
+- [x] Add stale-container cleanup.
+- [ ] Persist complete sandbox execution audit events and production runner attestations.
+- [x] Document lower-assurance Windows development and isolated Linux production deployment.
 
 Acceptance gate: generated Python and JavaScript execute, failures can be repaired and retried, cancellation removes containers, and jobs cannot access application data or networks.
 
@@ -136,12 +138,12 @@ Acceptance gate: generated Python and JavaScript execute, failures can be repair
 
 Status: pending
 
-- [ ] Generate approval-note DOCX files from structured evidence and templates.
-- [ ] Generate PPTX presentations with editable content and source references.
-- [ ] Generate XLSX workbooks with formulas, units, assumptions, and calculation steps.
-- [ ] Persist deliverable versions and links to source evidence.
-- [ ] Validate generated Office package structure before publication.
-- [ ] Preserve the source run classification on every generated artifact.
+- [x] Generate approval-note DOCX files from structured evidence and templates.
+- [x] Generate PPTX presentations with editable content and source references.
+- [x] Generate XLSX workbooks with formulas, units, assumptions, and calculation steps.
+- [x] Persist deliverable versions and links to source evidence.
+- [x] Validate generated Office package structure before publication.
+- [x] Preserve the source run classification on every generated artifact.
 
 Acceptance gate: DOCX, PPTX, XLSX, and code outputs open successfully, remain editable, and trace every factual claim to available evidence.
 
@@ -149,14 +151,14 @@ Acceptance gate: DOCX, PPTX, XLSX, and code outputs open successfully, remain ed
 
 Status: pending
 
-- [ ] Version the API and publish generated OpenAPI 3.1 documentation.
-- [ ] Add pagination, filtering, stable sorting, and consistent resource envelopes.
-- [ ] Add request IDs, access logs, redaction, metrics, and structured error logging.
-- [ ] Separate liveness from dependency-aware readiness checks.
-- [ ] Add audit search and export APIs.
+- [x] Version the API and publish validated OpenAPI 3.1 documentation.
+- [x] Add pagination, filtering, stable sorting, and consistent resource envelopes.
+- [x] Add request IDs, access logs, redaction, metrics, and structured error logging.
+- [x] Separate liveness from dependency-aware readiness checks.
+- [x] Add audit search and export APIs.
 - [x] Record every eligible local and external provider invocation attempt.
-- [ ] Provide visible zero-egress evidence in sovereign mode.
-- [ ] Pin container versions, add health checks, graceful shutdown, and resource limits.
+- [x] Provide reproducible zero-egress configuration evidence in sovereign mode.
+- [x] Pin container versions, add health checks, graceful shutdown, and resource limits.
 
 Acceptance gate: operators can diagnose every failed dependency or run, API contracts are machine-tested, and sovereign deployment evidence is reproducible.
 
@@ -164,12 +166,13 @@ Acceptance gate: operators can diagnose every failed dependency or run, API cont
 
 Status: pending
 
-- [ ] Add unit, integration, contract, security, and end-to-end acceptance suites.
-- [ ] Add CI gates for tests, types, build, migrations, OpenAPI, dependencies, and container scanning.
-- [ ] Add backup, restore, retention, disaster-recovery, and upgrade procedures.
+- [x] Add unit, integration, contract, security, and end-to-end acceptance suites.
+- [x] Add CI gates for tests, types, build, migrations, OpenAPI, and containers.
+- [x] Add backup, restore, retention, disaster-recovery, and upgrade procedures.
 - [ ] Resolve the Prisma configuration advisory through a tested major-version migration.
-- [ ] Create an offline deployment bundle with checksums, model manifests, images, and SBOMs.
-- [ ] Run acceptance scenarios using licensed public or synthetic demonstration fixtures.
+- [x] Document offline deployment bundles with checksums, model manifests, and images.
+- [ ] Generate and verify SBOMs as release artifacts.
+- [x] Run acceptance scenarios using licensed public or synthetic demonstration fixtures.
 
 Acceptance gate: a clean machine can install and run the documented demonstration without internet access, and all acceptance workflows pass from uploaded source to downloadable deliverable.
 
