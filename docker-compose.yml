@@ -22,6 +22,7 @@ x-backend-env: &backend-env
   QDRANT_URL: ${QDRANT_URL}
   QDRANT_API_KEY: ${QDRANT_API_KEY:-local-development-qdrant-key-change-me}
   SANDBOX_RUNNER_URL: http://sandbox-runner:4100
+  SANDBOX_API_TOKEN: ${SANDBOX_API_TOKEN:-local-development-sandbox-token-change-me}
   AMQP_URL: ${AMQP_URL}
   APP_MODE: ${APP_MODE}
   MODEL_CONFIG_PATH: /app/config/models.json
@@ -45,6 +46,9 @@ x-backend-env: &backend-env
   OUTBOX_MAX_BACKOFF_MS: ${OUTBOX_MAX_BACKOFF_MS:-60000}
   WORKER_SHUTDOWN_TIMEOUT_MS: ${WORKER_SHUTDOWN_TIMEOUT_MS:-30000}
   RUN_LEASE_DURATION_MS: ${RUN_LEASE_DURATION_MS:-30000}
+  AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-4}
+  AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-5}
+  AGENT_RUN_DEADLINE_MS: ${AGENT_RUN_DEADLINE_MS:-900000}
   RUN_HEARTBEAT_INTERVAL_MS: ${RUN_HEARTBEAT_INTERVAL_MS:-10000}
   RUN_RECOVERY_POLL_INTERVAL_MS: ${RUN_RECOVERY_POLL_INTERVAL_MS:-15000}
   DOCLING_BASE_URL: ${DOCLING_BASE_URL:-http://docling:5001}
@@ -141,15 +145,26 @@ services:
   sandbox-runner:
     build: ./backend/sandbox-runner
     environment:
-      SANDBOX_IMAGE: node:22-alpine
+      SANDBOX_API_TOKEN: ${SANDBOX_API_TOKEN:-local-development-sandbox-token-change-me}
+      SANDBOX_CONCURRENCY: 2
+      SANDBOX_QUEUE_LIMIT: 32
       SANDBOX_TIMEOUT_MS: 30000
+      SANDBOX_OUTPUT_LIMIT_BYTES: 262144
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - sandbox_workspaces:/workspaces
     networks: [internal]
     security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
     read_only: true
     tmpfs: [/tmp]
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4100/ready').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   backend:
     build: ./backend
@@ -175,7 +190,7 @@ services:
       minio-init: { condition: service_completed_successfully }
       qdrant: { condition: service_started }
       rabbitmq: { condition: service_healthy }
-      sandbox-runner: { condition: service_started }
+      sandbox-runner: { condition: service_healthy }
     environment: *backend-env
     extra_hosts: ["host.docker.internal:host-gateway"]
     # Development inference adapters are isolated to the execution worker.
@@ -202,4 +217,3 @@ volumes:
   minio_data:
   qdrant_data:
   rabbitmq_data:
-  sandbox_workspaces:

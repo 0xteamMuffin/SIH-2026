@@ -1,1 +1,12 @@
-{"private":true,"type":"module","dependencies":{"express":"^5.1.0"}}
+{
+  "name": "sih-sandbox-runner",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.node-test.mjs"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}

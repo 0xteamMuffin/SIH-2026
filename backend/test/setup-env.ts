@@ -18,6 +18,7 @@ process.env.MINIO_BUCKET = "test-artifacts";
 process.env.QDRANT_URL = "http://localhost:6333";
 process.env.QDRANT_API_KEY = "test-qdrant-api-key";
 process.env.SANDBOX_RUNNER_URL = "http://localhost:4100";
+process.env.SANDBOX_API_TOKEN = "test-sandbox-token-with-at-least-32-bytes";
 process.env.DOCLING_BASE_URL = "http://localhost:5001";
 process.env.DOCLING_API_KEY = "test-docling-api-key";
 process.env.DOCLING_REQUEST_TIMEOUT_MS = "310000";
