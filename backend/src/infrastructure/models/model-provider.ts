@@ -1,21 +1,64 @@
 import { DataClassification } from "@prisma/client";
+import { z } from "zod";
 import { env } from "../../config/env.js";
 import { AppError } from "../../lib/errors.js";
 import { allowsExternalInference } from "../../lib/data-classification.js";
 import type { ModelProfile } from "./model-registry.js";
 
-export async function askModel(profile: ModelProfile, classification: DataClassification, system: string, prompt: string) {
+const responseSchema = z.object({
+  choices: z.array(z.object({
+    finish_reason: z.string().nullish(),
+    message: z.object({ content: z.string().nullish() }),
+  })).min(1),
+  usage: z.object({
+    prompt_tokens: z.number().int().nonnegative().optional(),
+    completion_tokens: z.number().int().nonnegative().optional(),
+    total_tokens: z.number().int().nonnegative().optional(),
+  }).optional(),
+});
+
+export type ModelResponse = {
+  text: string;
+  provider: ModelProfile["provider"];
+  modelId: string;
+  finishReason?: string;
+  latencyMs: number;
+  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+};
+
+export async function askModel(profile: ModelProfile, classification: DataClassification, system: string, prompt: string, signal?: AbortSignal): Promise<ModelResponse> {
   if (profile.provider === "openrouter" && !allowsExternalInference(classification)) {
     throw new AppError(422, "External inference is restricted to public or synthetic data", "EXTERNAL_INFERENCE_BLOCKED");
   }
   if (profile.provider === "openrouter" && !env.OPENROUTER_API_KEY) {
-    throw new Error("OpenRouter is not configured. Set OPENROUTER_API_KEY or use the sovereign local-model deployment.");
+    throw new AppError(503, "OpenRouter is not configured", "MODEL_PROVIDER_NOT_CONFIGURED");
   }
   const settings = profile.provider === "openrouter"
-    ? { name: "openrouter", baseURL: "https://openrouter.ai/api/v1", apiKey: env.OPENROUTER_API_KEY! }
-    : { name: "local", baseURL: profile.endpoint!, apiKey: env.LOCAL_MODEL_API_KEY };
-  const response = await fetch(`${settings.baseURL}/chat/completions`, { method: "POST", headers: { authorization: `Bearer ${settings.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: profile.modelId, messages: [{ role: "system", content: system }, { role: "user", content: prompt }], max_tokens: profile.maxOutputTokens }) });
-  if (!response.ok) throw new Error(`Model provider request failed (${response.status})`);
-  const data = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: unknown };
-  return { text: data.choices?.[0]?.message?.content ?? "", usage: data.usage };
+    ? { baseURL: "https://openrouter.ai/api/v1", apiKey: env.OPENROUTER_API_KEY! }
+    : { baseURL: profile.endpoint!, apiKey: env.LOCAL_MODEL_API_KEY };
+  const timeoutSignal = AbortSignal.timeout(env.MODEL_REQUEST_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  const startedAt = performance.now();
+  let response: Response;
+  try {
+    response = await fetch(`${settings.baseURL}/chat/completions`, { method: "POST", headers: { authorization: `Bearer ${settings.apiKey}`, "content-type": "application/json" }, body: JSON.stringify({ model: profile.modelId, messages: [{ role: "system", content: system }, { role: "user", content: prompt }], max_tokens: profile.maxOutputTokens }), signal: requestSignal });
+  } catch (error) {
+    if (signal?.aborted) throw new AppError(503, "Model request was cancelled", "MODEL_REQUEST_CANCELLED");
+    if (requestSignal.aborted || (error instanceof Error && error.name === "TimeoutError")) throw new AppError(504, "Model provider request timed out", "MODEL_TIMEOUT");
+    throw new AppError(502, "Model provider is unavailable", "MODEL_PROVIDER_UNAVAILABLE");
+  }
+  if (!response.ok) {
+    const code = response.status === 429 ? "MODEL_RATE_LIMITED" : "MODEL_PROVIDER_ERROR";
+    throw new AppError(response.status === 429 ? 503 : 502, `Model provider request failed with status ${response.status}`, code);
+  }
+  let data: z.infer<typeof responseSchema>;
+  try {
+    data = responseSchema.parse(await response.json());
+  } catch {
+    throw new AppError(502, "Model provider returned an invalid response", "MODEL_RESPONSE_INVALID");
+  }
+  const text = data.choices[0].message.content?.trim();
+  if (!text) throw new AppError(502, "Model provider returned an empty response", "MODEL_RESPONSE_EMPTY");
+  const usage = data.usage ? { promptTokens: data.usage.prompt_tokens, completionTokens: data.usage.completion_tokens, totalTokens: data.usage.total_tokens } : undefined;
+  return { text, provider: profile.provider, modelId: profile.modelId, finishReason: data.choices[0].finish_reason ?? undefined, latencyMs: Math.round(performance.now() - startedAt), usage };
 }

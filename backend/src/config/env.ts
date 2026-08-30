@@ -17,6 +17,7 @@ const schema = z.object({
   APP_MODE: z.enum(["development", "sovereign"]).default("development"),
   MODEL_PROVIDER: z.enum(["openrouter", "local"]),
   MODEL_REGISTRY_JSON: z.string().optional(),
+  MODEL_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(120_000),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default("meta-llama/llama-3.3-70b-instruct"),
   LOCAL_MODEL_BASE_URL: z.string().url().optional(),
