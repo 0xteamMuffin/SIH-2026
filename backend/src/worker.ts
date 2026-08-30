@@ -1,6 +1,8 @@
 import { env } from "./config/env.js";
 import { consumeAgentRuns } from "./infrastructure/queue/agent-run-consumer.js";
+import { consumeAgentRunCancellations } from "./infrastructure/queue/agent-run-cancellation-consumer.js";
 import { runOutboxDispatcher } from "./infrastructure/queue/outbox-dispatcher.js";
+import { recoverStaleRuns, runStaleRunRecovery } from "./infrastructure/queue/run-recovery.js";
 import { closeRabbitMq, rabbitChannel } from "./infrastructure/queue/rabbitmq.js";
 import { logger } from "./lib/logger.js";
 import { prisma } from "./lib/prisma.js";
@@ -8,9 +10,13 @@ import { failRun, processRun } from "./modules/agent/agent.service.js";
 
 async function main() {
   const channel = await rabbitChannel();
+  const startupRecovery = await recoverStaleRuns();
+  if (startupRecovery.recovered > 0) logger.warn(startupRecovery, "Recovered stale agent runs at startup");
   const consumer = await consumeAgentRuns(channel, processRun, failRun);
+  const cancellationConsumer = await consumeAgentRunCancellations(channel, consumer.abort);
   const dispatcherController = new AbortController();
   const dispatcher = runOutboxDispatcher(dispatcherController.signal);
+  const recovery = runStaleRunRecovery(dispatcherController.signal);
   let shuttingDown = false;
 
   const shutdown = async (signal: string, exitCode = 0) => {
@@ -18,7 +24,11 @@ async function main() {
     shuttingDown = true;
     logger.info({ signal }, "Worker shutting down");
     dispatcherController.abort();
-    const graceful = Promise.allSettled([consumer.stop(), dispatcher]);
+    const graceful = (async () => {
+      await consumer.stop();
+      await cancellationConsumer.stop();
+      await Promise.allSettled([dispatcher, recovery]);
+    })();
     let timeoutHandle: NodeJS.Timeout | undefined;
     let timedOut = false;
     const timeout = new Promise<never>((_, reject) => { timeoutHandle = setTimeout(() => reject(new Error("Worker shutdown timed out")), env.WORKER_SHUTDOWN_TIMEOUT_MS); });

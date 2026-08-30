@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { decodeAgentRunRequested, parseAgentRunRequested } from "../src/infrastructure/queue/agent-run-message.js";
-import { publishAgentRunRequested } from "../src/infrastructure/queue/publisher.js";
+import { publishAgentRunCancelled, publishAgentRunRequested } from "../src/infrastructure/queue/publisher.js";
 import { assertRabbitTopology, queueTopology } from "../src/infrastructure/queue/rabbitmq.js";
 
 describe("RabbitMQ topology", () => {
@@ -14,6 +14,7 @@ describe("RabbitMQ topology", () => {
     await assertRabbitTopology(channel as never);
 
     expect(channel.assertExchange).toHaveBeenCalledWith(queueTopology.exchange, "direct", { durable: true });
+    expect(channel.assertExchange).toHaveBeenCalledWith(queueTopology.controlExchange, "fanout", { durable: true });
     expect(channel.assertQueue).toHaveBeenCalledWith(queueTopology.runQueue, expect.objectContaining({ durable: true }));
     expect(channel.assertQueue).toHaveBeenCalledWith(queueTopology.retryQueue, expect.objectContaining({
       arguments: expect.objectContaining({ "x-dead-letter-exchange": queueTopology.exchange }),
@@ -43,6 +44,24 @@ describe("RabbitMQ topology", () => {
       queueTopology.runRoutingKey,
       Buffer.from(JSON.stringify({ runId })),
       expect.objectContaining({ persistent: true, type: "agent.run.requested", messageId: "event-1" }),
+      expect.any(Function),
+    );
+  });
+
+  it("broadcasts persistent cancellation control messages", async () => {
+    const runId = "a8aa8f67-39f9-4491-813b-20e81f4bda13";
+    const publish = vi.fn((_exchange, _routingKey, _content, _options, confirm) => {
+      confirm(undefined, {});
+      return true;
+    });
+
+    await publishAgentRunCancelled({ publish } as never, { runId }, { messageId: "cancel-1" });
+
+    expect(publish).toHaveBeenCalledWith(
+      queueTopology.controlExchange,
+      "",
+      Buffer.from(JSON.stringify({ runId })),
+      expect.objectContaining({ persistent: true, type: "agent.run.cancelled", messageId: "cancel-1" }),
       expect.any(Function),
     );
   });

@@ -5,7 +5,7 @@ import { decodeAgentRunRequested, type AgentRunRequestedMessage } from "./agent-
 import { publishAgentRunRequested, publishInvalidAgentRunToDeadQueue } from "./publisher.js";
 import { queueTopology } from "./rabbitmq.js";
 
-export type ProcessAgentRun = (runId: string) => Promise<void>;
+export type ProcessAgentRun = (runId: string, signal: AbortSignal) => Promise<void>;
 export type FailAgentRun = (runId: string, error: unknown) => Promise<void>;
 
 function retryCount(message: ConsumeMessage) {
@@ -30,6 +30,7 @@ export async function handleAgentRunDelivery(
   delivery: ConsumeMessage,
   processRun: ProcessAgentRun,
   failRun: FailAgentRun,
+  signal = new AbortController().signal,
 ) {
   let message: AgentRunRequestedMessage;
   try {
@@ -40,7 +41,7 @@ export async function handleAgentRunDelivery(
   }
 
   try {
-    await processRun(message.runId);
+    await processRun(message.runId, signal);
     channel.ack(delivery);
   } catch (error) {
     const attempts = retryCount(delivery);
@@ -61,15 +62,33 @@ export async function handleAgentRunDelivery(
 
 export async function consumeAgentRuns(channel: ConfirmChannel, processRun: ProcessAgentRun, failRun: FailAgentRun) {
   const active = new Set<Promise<void>>();
+  const controllers = new Map<string, Set<AbortController>>();
   const consumer = await channel.consume(queueTopology.runQueue, (delivery) => {
     if (!delivery) return;
-    const task = handleAgentRunDelivery(channel, delivery, processRun, failRun)
+    let runId: string | undefined;
+    try { runId = decodeAgentRunRequested(delivery.content).runId; } catch { /* Validation and dead-lettering happen in the delivery handler. */ }
+    const controller = new AbortController();
+    if (runId) {
+      const runControllers = controllers.get(runId) ?? new Set<AbortController>();
+      runControllers.add(controller);
+      controllers.set(runId, runControllers);
+    }
+    const task = handleAgentRunDelivery(channel, delivery, processRun, failRun, controller.signal)
       .catch((error) => logger.error({ error }, "Agent run delivery failed unexpectedly"))
-      .finally(() => active.delete(task));
+      .finally(() => {
+        active.delete(task);
+        if (!runId) return;
+        const runControllers = controllers.get(runId);
+        runControllers?.delete(controller);
+        if (runControllers?.size === 0) controllers.delete(runId);
+      });
     active.add(task);
   }, { noAck: false });
 
   return {
+    abort(runId: string) {
+      for (const controller of controllers.get(runId) ?? []) controller.abort(new Error("Agent run was cancelled"));
+    },
     async stop() {
       await channel.cancel(consumer.consumerTag);
       await Promise.allSettled([...active]);

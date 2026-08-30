@@ -1,5 +1,5 @@
 import type { ConfirmChannel, Options } from "amqplib";
-import { AGENT_RUN_REQUESTED_TOPIC, parseAgentRunRequested, type AgentRunRequestedMessage } from "./agent-run-message.js";
+import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_REQUESTED_TOPIC, parseAgentRunCancelled, parseAgentRunRequested, type AgentRunCancelledMessage, type AgentRunRequestedMessage } from "./agent-run-message.js";
 import { queueTopology } from "./rabbitmq.js";
 
 export type AgentRunDestination = "run" | "retry" | "dead";
@@ -45,5 +45,15 @@ export async function publishInvalidAgentRunToDeadQueue(channel: ConfirmChannel,
     type: AGENT_RUN_REQUESTED_TOPIC,
     messageId: options.messageId,
     headers: { "x-invalid-message": true, "x-last-error": options.error.slice(0, 512) },
+  });
+}
+
+export async function publishAgentRunCancelled(channel: ConfirmChannel, message: AgentRunCancelledMessage, options: { messageId?: string } = {}) {
+  const validated = parseAgentRunCancelled(message);
+  await confirmedPublish(channel, queueTopology.controlExchange, "", Buffer.from(JSON.stringify(validated)), {
+    persistent: true,
+    contentType: "application/json",
+    type: AGENT_RUN_CANCELLED_TOPIC,
+    messageId: options.messageId,
   });
 }

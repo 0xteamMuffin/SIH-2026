@@ -2,8 +2,8 @@ import type { OutboxEvent, PrismaClient } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
-import { AGENT_RUN_REQUESTED_TOPIC } from "./agent-run-message.js";
-import { publishAgentRunRequested } from "./publisher.js";
+import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_REQUESTED_TOPIC } from "./agent-run-message.js";
+import { publishAgentRunCancelled, publishAgentRunRequested } from "./publisher.js";
 import { rabbitChannel } from "./rabbitmq.js";
 
 type OutboxStore = Pick<PrismaClient, "outboxEvent">;
@@ -17,12 +17,16 @@ export function outboxBackoffMs(attempts: number) {
 
 async function publishEvent(event: OutboxEvent) {
   const channel = await rabbitChannel();
+  if (event.topic === AGENT_RUN_CANCELLED_TOPIC) {
+    await publishAgentRunCancelled(channel, { runId: event.aggregateId }, { messageId: event.id });
+    return;
+  }
   await publishAgentRunRequested(channel, { runId: event.aggregateId }, { messageId: event.id });
 }
 
 export async function dispatchOutboxBatch(store: OutboxStore = prisma, publish: PublishOutboxEvent = publishEvent, now = new Date()) {
   const events = await store.outboxEvent.findMany({
-    where: { topic: AGENT_RUN_REQUESTED_TOPIC, publishedAt: null, availableAt: { lte: now } },
+    where: { topic: { in: [AGENT_RUN_REQUESTED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_CANCELLED_TOPIC] }, publishedAt: null, availableAt: { lte: now } },
     orderBy: { createdAt: "asc" },
     take: env.OUTBOX_BATCH_SIZE,
   });

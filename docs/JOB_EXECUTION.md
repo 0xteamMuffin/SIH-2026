@@ -8,7 +8,9 @@ Agent work uses PostgreSQL as the source of truth and RabbitMQ as the delivery t
 - The outbox dispatcher publishes unpublished events through a RabbitMQ confirm channel.
 - The worker consumes persistent messages with manual acknowledgements and bounded prefetch.
 - The worker claims runs through an atomic PostgreSQL status transition before executing tools.
+- Active claims carry a lease ID, heartbeat timestamp, and expiry timestamp.
 - The worker's periodic dispatcher republishes pending outbox events after worker or broker recovery.
+- Startup and periodic recovery atomically return expired `RUNNING` claims to `PENDING` and create a fresh recovery outbox event.
 
 ## Topology
 
@@ -18,6 +20,7 @@ Agent work uses PostgreSQL as the source of truth and RabbitMQ as the delivery t
 | `workbench.agent.runs` | Durable primary queue consumed by agent workers. |
 | `workbench.agent.retry` | Durable retry queue that returns messages to the primary exchange after a bounded delay. |
 | `workbench.agent.dead` | Durable dead-letter queue for exhausted or invalid messages. |
+| `workbench.agent.control` | Durable fanout exchange for cancellation commands delivered to every live worker. |
 
 Queue names and worker concurrency are configurable. Message bodies contain identifiers only; source documents and prompts are loaded from authorized durable storage by the worker.
 
@@ -36,11 +39,15 @@ Queue names and worker concurrency are configurable. Message bodies contain iden
 - If publication succeeds but marking the outbox row fails, republishing is safe because the run claim is idempotent.
 - If a worker exits before acknowledgement, RabbitMQ redelivers the message.
 - If a worker exits after a tool side effect, tool idempotency keys prevent duplicate effects.
-- Stale `RUNNING` runs are recovered according to their heartbeat and retry policy.
+- Workers renew leases while running. An expired or missing lease is recovered with a compare-and-set transition and a new outbox event, so concurrent recovery cycles cannot enqueue the same transition twice.
+- Lease IDs fence completion and retry transitions from an obsolete worker attempt.
+- Completed tool outputs are replayed without invoking the tool again; generated artifacts also use a deterministic object key to cover interruption between artifact persistence and tool completion persistence.
 
 ## Cancellation
 
-Cancellation first performs an atomic database transition. Workers use an `AbortController` per active run and check cancellation between tool steps. The API publishes a cancellation command so the owning worker can abort model and sandbox requests promptly. Terminal compare-and-set updates prevent cancelled runs from becoming completed or failed afterward.
+Cancellation first performs the `CANCELLED` database transition and creates its outbox event in one transaction. Repeated cancellation returns the existing cancelled run without creating another event. The outbox dispatcher broadcasts the command to every live worker; the worker that owns the active delivery aborts its per-run controller, which propagates through model and sandbox HTTP requests. Heartbeat lease loss provides a fallback abort when a control message is missed, and terminal compare-and-set updates prevent cancelled runs from becoming completed or failed afterward.
+
+Control queues are exclusive and worker-local, so a cancellation broadcast sent while no worker is connected is not retained by RabbitMQ. PostgreSQL remains authoritative: a later delivery cannot claim a cancelled run.
 
 ## Security
 

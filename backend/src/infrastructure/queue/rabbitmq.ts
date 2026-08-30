@@ -8,6 +8,7 @@ export const queueTopology = {
   runRoutingKey: "run",
   retryQueue: `${env.AGENT_QUEUE_PREFIX}.retry`,
   retryRoutingKey: "retry",
+  controlExchange: `${env.AGENT_QUEUE_PREFIX}.control`,
   deadExchange: `${env.AGENT_QUEUE_PREFIX}.dead-letter`,
   deadQueue: `${env.AGENT_QUEUE_PREFIX}.dead`,
   deadRoutingKey: "dead",
@@ -19,6 +20,7 @@ let channel: ConfirmChannel | undefined;
 export async function assertRabbitTopology(target: ConfirmChannel) {
   await target.assertExchange(queueTopology.exchange, "direct", { durable: true });
   await target.assertExchange(queueTopology.deadExchange, "direct", { durable: true });
+  await target.assertExchange(queueTopology.controlExchange, "fanout", { durable: true });
   await target.assertQueue(queueTopology.runQueue, {
     durable: true,
     arguments: {

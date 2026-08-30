@@ -106,6 +106,9 @@ model AgentRun {
   state              Json               @default("{}")
   result             Json?
   activeWorkspaceId  String?            @unique @map("active_workspace_id") @db.Uuid
+  leaseId            String?            @map("lease_id") @db.Uuid
+  heartbeatAt        DateTime?          @map("heartbeat_at")
+  leaseExpiresAt     DateTime?          @map("lease_expires_at")
   startedAt          DateTime?          @map("started_at")
   completedAt        DateTime?          @map("completed_at")
   createdAt          DateTime           @default(now()) @map("created_at")
@@ -118,6 +121,7 @@ model AgentRun {
   auditEvents        AuditEvent[]
 
   @@index([workspaceId, createdAt])
+  @@index([status, leaseExpiresAt])
   @@map("agent_runs")
 }
 
@@ -193,7 +197,6 @@ model OutboxEvent {
   lastError   String?   @map("last_error")
   createdAt   DateTime  @default(now()) @map("created_at")
 
-  @@unique([topic, aggregateId])
   @@index([publishedAt, availableAt])
   @@map("outbox_events")
 }

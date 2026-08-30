@@ -48,8 +48,8 @@ Status: in progress
 - [x] Move agent processing from the API process into a dedicated worker.
 - [x] Make enqueueing idempotent and recover database/queue inconsistencies.
 - [ ] Add bounded retries, backoff, timeouts, progress events, and failure reasons.
-- [ ] Implement real cancellation using worker and tool abort signals.
-- [ ] Recover or fail stale runs after worker restarts.
+- [x] Implement real cancellation using worker and tool abort signals.
+- [x] Recover or fail stale runs after worker restarts.
 - [ ] Enforce global, workspace, and user concurrency limits.
 
 Acceptance gate: queued work survives API restarts, cancellation stops active processing, and duplicate delivery cannot duplicate tool side effects.
@@ -164,11 +164,8 @@ Acceptance gate: a clean machine can install and run the documented demonstratio
 
 ## Immediate commit sequence
 
-1. Add a validated model registry with capability-based priorities.
-2. Add provider timeout, normalized responses, and failure tests.
-3. Persist model invocation usage and audit metadata.
-4. Add cancellation commands and worker abort controllers.
-5. Recover stale runs using leases and heartbeats.
-6. Add cancellation, retries, recovery, and progress events.
+1. Persist model invocation usage and audit metadata.
+2. Add bounded execution progress events and failure details.
+3. Enforce global, workspace, and user concurrency limits.
 
 The sequence may be adjusted only when a discovered dependency or security defect must be resolved first.

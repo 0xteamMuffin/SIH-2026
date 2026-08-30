@@ -29,6 +29,9 @@ const schema = z.object({
   OUTBOX_BATCH_SIZE: z.coerce.number().int().min(1).max(1_000).default(25),
   OUTBOX_MAX_BACKOFF_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(60_000),
   WORKER_SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(30_000),
+  RUN_LEASE_DURATION_MS: z.coerce.number().int().min(5_000).max(600_000).default(30_000),
+  RUN_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).default(10_000),
+  RUN_RECOVERY_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000).max(600_000).default(15_000),
   APP_MODE: z.enum(["development", "sovereign"]).default("development"),
   MODEL_CONFIG_PATH: z.string().min(1).default("config/models.json"),
   ALLOW_REMOTE_INFERENCE: booleanString.default(false),
@@ -37,6 +40,9 @@ const schema = z.object({
 }).superRefine((value, ctx) => {
   if (value.APP_MODE === "sovereign" && value.ALLOW_REMOTE_INFERENCE) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Sovereign mode cannot allow remote inference" });
+  }
+  if (value.RUN_HEARTBEAT_INTERVAL_MS >= value.RUN_LEASE_DURATION_MS) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "RUN_HEARTBEAT_INTERVAL_MS must be shorter than RUN_LEASE_DURATION_MS" });
   }
 });
 

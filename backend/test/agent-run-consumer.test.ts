@@ -30,7 +30,7 @@ describe("agent run consumer policy", () => {
 
     await handleAgentRunDelivery(channel as never, message as never, processRun, vi.fn());
 
-    expect(processRun).toHaveBeenCalledWith(runId);
+    expect(processRun).toHaveBeenCalledWith(runId, expect.any(AbortSignal));
     expect(channel.ack).toHaveBeenCalledWith(message);
     expect(channel.publish).not.toHaveBeenCalled();
   });

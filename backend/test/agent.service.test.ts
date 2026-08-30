@@ -1,7 +1,7 @@
 import { DataClassification, RunStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { auditMock, agentRunMock, outboxEventMock, transactionMock } = vi.hoisted(() => ({
+const { auditMock, agentRunMock, outboxEventMock, runToolCallMock, transactionMock } = vi.hoisted(() => ({
   auditMock: vi.fn(),
   agentRunMock: {
     create: vi.fn(),
@@ -11,22 +11,27 @@ const { auditMock, agentRunMock, outboxEventMock, transactionMock } = vi.hoisted
     updateMany: vi.fn(),
   },
   outboxEventMock: { create: vi.fn() },
+  runToolCallMock: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   transactionMock: vi.fn(),
 }));
 
-vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock, outboxEvent: outboxEventMock, $transaction: transactionMock } }));
+vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock, outboxEvent: outboxEventMock, runToolCall: runToolCallMock, $transaction: transactionMock } }));
 vi.mock("../src/lib/audit.js", () => ({ audit: auditMock }));
 
-import { cancelRun, createRun, getRun, processRun } from "../src/modules/agent/agent.service.js";
+import { cancelRun, createRun, executeRunTool, failRun, getRun, processRun } from "../src/modules/agent/agent.service.js";
 
 describe("agent run access", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    transactionMock.mockImplementation((input) => Array.isArray(input)
+      ? Promise.all(input)
+      : input({ agentRun: agentRunMock, outboxEvent: outboxEventMock }));
+  });
 
   it("creates a run and queue outbox event atomically", async () => {
     const run = { id: "run-1", workspaceId: "workspace-1", status: RunStatus.PENDING };
     agentRunMock.create.mockResolvedValue(run);
     outboxEventMock.create.mockResolvedValue({ id: "event-1" });
-    transactionMock.mockResolvedValue([run, { id: "event-1" }]);
 
     await expect(createRun({ workspaceId: "workspace-1", userId: "user-1", task: "Summarize the public report", dataClassification: DataClassification.PUBLIC })).resolves.toEqual(run);
 
@@ -40,6 +45,14 @@ describe("agent run access", () => {
     agentRunMock.findUnique.mockResolvedValue({ id: "run-1", status: RunStatus.COMPLETED });
 
     await expect(processRun("run-1")).resolves.toBeUndefined();
+
+    expect(agentRunMock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a cancelled run after worker failure", async () => {
+    agentRunMock.findUnique.mockResolvedValue({ id: "run-1", status: RunStatus.CANCELLED });
+
+    await expect(failRun("run-1", new Error("late worker failure"))).resolves.toBeUndefined();
 
     expect(agentRunMock.updateMany).not.toHaveBeenCalled();
   });
@@ -80,14 +93,38 @@ describe("agent run access", () => {
     expect(agentRunMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "run-1", status: { in: [RunStatus.PENDING, RunStatus.RUNNING] } },
     }));
+    expect(outboxEventMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ topic: "agent.run.cancelled", aggregateId: "run-1" }) });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ actorId: "user-1", eventType: "AGENT_RUN_CANCELLED" }));
+  });
+
+  it("treats repeated cancellation as an idempotent success", async () => {
+    const cancelled = { id: "run-1", workspaceId: "workspace-1", status: RunStatus.CANCELLED };
+    agentRunMock.findFirst.mockResolvedValue(cancelled);
+
+    await expect(cancelRun("run-1", { id: "user-1", role: "OPERATOR" })).resolves.toEqual(cancelled);
+
+    expect(transactionMock).not.toHaveBeenCalled();
+    expect(outboxEventMock.create).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalled();
   });
 
   it("rejects cancellation after another transition wins", async () => {
     agentRunMock.findFirst.mockResolvedValue({ id: "run-1", status: RunStatus.RUNNING });
     agentRunMock.updateMany.mockResolvedValue({ count: 0 });
+    agentRunMock.findUnique.mockResolvedValue({ id: "run-1", status: RunStatus.COMPLETED });
 
     await expect(cancelRun("run-1", { id: "user-1", role: "OPERATOR" })).rejects.toMatchObject({ status: 409, code: "RUN_NOT_ACTIVE" });
     expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a completed tool result without repeating its side effect", async () => {
+    const output = { ok: true, summary: "already generated", data: { artifactId: "artifact-1" } };
+    runToolCallMock.findUnique.mockResolvedValue({ status: "COMPLETED", output });
+    const work = vi.fn();
+
+    await expect(executeRunTool("run-1", "deliverable.create", { format: "docx" }, work)).resolves.toEqual(output);
+
+    expect(work).not.toHaveBeenCalled();
+    expect(runToolCallMock.update).not.toHaveBeenCalled();
   });
 });
