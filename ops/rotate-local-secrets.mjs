@@ -61,10 +61,17 @@ next.DATABASE_URL = `postgresql://${encodeURIComponent(databaseUser)}:${encodeUR
 next.S3_SECRET_KEY = next.MINIO_ROOT_PASSWORD;
 next.AMQP_URL = `amqp://${encodeURIComponent(rabbitUser)}:${encodeURIComponent(next.RABBITMQ_DEFAULT_PASS)}@rabbitmq:5672`;
 
-const updated = source.split(/\r?\n/).map((line) => {
+const replaced = new Set();
+const lines = source.split(/\r?\n/).map((line) => {
   const match = line.match(/^([A-Z][A-Z0-9_]*)=/);
-  return match && Object.hasOwn(next, match[1]) ? `${match[1]}=${next[match[1]]}` : line;
-}).join("\n");
+  if (!match || !Object.hasOwn(next, match[1])) return line;
+  replaced.add(match[1]);
+  return `${match[1]}=${next[match[1]]}`;
+});
+for (const [key, value] of Object.entries(next)) {
+  if (!replaced.has(key)) lines.push(`${key}=${value}`);
+}
+const updated = lines.join("\n");
 const temporaryPath = `${envPath}.tmp`;
 await writeFile(temporaryPath, updated, { encoding: "utf8", mode: 0o600 });
 await rename(temporaryPath, envPath);
