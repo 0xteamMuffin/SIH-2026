@@ -3,8 +3,9 @@ import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
 import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_REQUESTED_TOPIC } from "./agent-run-message.js";
-import { publishAgentRunCancelled, publishAgentRunRequested } from "./publisher.js";
-import { rabbitChannel } from "./rabbitmq.js";
+import { KNOWLEDGE_JOB_REQUESTED_TOPIC, parseKnowledgeJobRequested } from "./knowledge-job-message.js";
+import { publishAgentRunCancelled, publishAgentRunRequested, publishKnowledgeJobRequested } from "./publisher.js";
+import { knowledgeRabbitChannel, rabbitChannel } from "./rabbitmq.js";
 
 type OutboxStore = Pick<PrismaClient, "outboxEvent">;
 type PublishOutboxEvent = (event: OutboxEvent) => Promise<void>;
@@ -16,6 +17,11 @@ export function outboxBackoffMs(attempts: number) {
 }
 
 async function publishEvent(event: OutboxEvent) {
+  if (event.topic === KNOWLEDGE_JOB_REQUESTED_TOPIC) {
+    const channel = await knowledgeRabbitChannel();
+    await publishKnowledgeJobRequested(channel, parseKnowledgeJobRequested(event.payload), { messageId: event.id });
+    return;
+  }
   const channel = await rabbitChannel();
   if (event.topic === AGENT_RUN_CANCELLED_TOPIC) {
     await publishAgentRunCancelled(channel, { runId: event.aggregateId }, { messageId: event.id });
@@ -26,7 +32,7 @@ async function publishEvent(event: OutboxEvent) {
 
 export async function dispatchOutboxBatch(store: OutboxStore = prisma, publish: PublishOutboxEvent = publishEvent, now = new Date()) {
   const events = await store.outboxEvent.findMany({
-    where: { topic: { in: [AGENT_RUN_REQUESTED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_CANCELLED_TOPIC] }, publishedAt: null, availableAt: { lte: now } },
+    where: { topic: { in: [AGENT_RUN_REQUESTED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_CANCELLED_TOPIC, KNOWLEDGE_JOB_REQUESTED_TOPIC] }, publishedAt: null, availableAt: { lte: now } },
     orderBy: { createdAt: "asc" },
     take: env.OUTBOX_BATCH_SIZE,
   });

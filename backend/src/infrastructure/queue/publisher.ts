@@ -1,8 +1,10 @@
 import type { ConfirmChannel, Options } from "amqplib";
 import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_REQUESTED_TOPIC, parseAgentRunCancelled, parseAgentRunRequested, type AgentRunCancelledMessage, type AgentRunRequestedMessage } from "./agent-run-message.js";
-import { queueTopology } from "./rabbitmq.js";
+import { KNOWLEDGE_JOB_REQUESTED_TOPIC, parseKnowledgeJobRequested, type KnowledgeJobRequestedMessage } from "./knowledge-job-message.js";
+import { knowledgeQueueTopology, queueTopology } from "./rabbitmq.js";
 
 export type AgentRunDestination = "run" | "retry" | "dead";
+export type KnowledgeJobDestination = "jobs" | "retry" | "dead";
 
 function confirmedPublish(channel: ConfirmChannel, exchange: string, routingKey: string, content: Buffer, options: Options.Publish) {
   return new Promise<void>((resolve, reject) => {
@@ -55,5 +57,37 @@ export async function publishAgentRunCancelled(channel: ConfirmChannel, message:
     contentType: "application/json",
     type: AGENT_RUN_CANCELLED_TOPIC,
     messageId: options.messageId,
+  });
+}
+
+export async function publishKnowledgeJobRequested(
+  channel: ConfirmChannel,
+  message: KnowledgeJobRequestedMessage,
+  options: { destination?: KnowledgeJobDestination; messageId?: string; retryCount?: number; error?: string } = {},
+) {
+  const validated = parseKnowledgeJobRequested(message);
+  const destination = options.destination ?? "jobs";
+  const routingKey = destination === "jobs"
+    ? knowledgeQueueTopology.jobsRoutingKey
+    : destination === "retry" ? knowledgeQueueTopology.retryRoutingKey : knowledgeQueueTopology.deadRoutingKey;
+  await confirmedPublish(channel, knowledgeQueueTopology.exchange, routingKey, Buffer.from(JSON.stringify(validated)), {
+    persistent: true,
+    contentType: "application/json",
+    type: KNOWLEDGE_JOB_REQUESTED_TOPIC,
+    messageId: options.messageId,
+    headers: {
+      ...(options.retryCount === undefined ? {} : { "x-retry-count": options.retryCount }),
+      ...(options.error === undefined ? {} : { "x-last-error": options.error.slice(0, 512) }),
+    },
+  });
+}
+
+export async function publishInvalidKnowledgeJobToDeadQueue(channel: ConfirmChannel, content: Buffer, options: { messageId?: string; error: string }) {
+  await confirmedPublish(channel, knowledgeQueueTopology.exchange, knowledgeQueueTopology.deadRoutingKey, content, {
+    persistent: true,
+    contentType: "application/json",
+    type: KNOWLEDGE_JOB_REQUESTED_TOPIC,
+    messageId: options.messageId,
+    headers: { "x-invalid-message": true, "x-last-error": options.error.slice(0, 512) },
   });
 }

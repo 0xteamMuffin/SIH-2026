@@ -28,6 +28,23 @@ describe("outbox dispatcher", () => {
       where: { id: row.id, publishedAt: null },
       data: expect.objectContaining({ publishedAt: expect.any(Date), lastError: null }),
     }));
+    expect(store.outboxEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ topic: { in: expect.arrayContaining(["agent.run.requested", "knowledge.job.requested"]) } }),
+    }));
+  });
+
+  it("selects knowledge job outbox events without changing their payload", async () => {
+    const row = event({
+      topic: "knowledge.job.requested",
+      aggregateId: "f06544e7-6922-4e7c-a025-3f98e934e56f",
+      payload: { jobId: "f06544e7-6922-4e7c-a025-3f98e934e56f" },
+    });
+    const store = { outboxEvent: { findMany: vi.fn().mockResolvedValue([row]), updateMany: vi.fn().mockResolvedValue({ count: 1 }) } };
+    const publish = vi.fn().mockResolvedValue(undefined);
+
+    await dispatchOutboxBatch(store as never, publish, new Date("2026-08-30T12:00:01Z"));
+
+    expect(publish).toHaveBeenCalledWith(row);
   });
 
   it("retains failed events and schedules exponential backoff", async () => {

@@ -2,6 +2,8 @@
 
 Agent work uses PostgreSQL as the source of truth and RabbitMQ as the delivery transport. RabbitMQ availability must not determine whether an accepted run record is preserved.
 
+Knowledge jobs use the same outbox delivery guarantees but an isolated exchange, queues, channel, prefetch, and retry policy. A knowledge processor starts this consumer by calling `startKnowledgeWorker(processKnowledgeJob, failKnowledgeJob)`; the agent worker does not consume knowledge jobs.
+
 ## Components
 
 - The API creates an `AgentRun` and an outbox event in one PostgreSQL transaction.
@@ -21,8 +23,14 @@ Agent work uses PostgreSQL as the source of truth and RabbitMQ as the delivery t
 | `workbench.agent.retry` | Durable retry queue that returns messages to the primary exchange after a bounded delay. |
 | `workbench.agent.dead` | Durable dead-letter queue for exhausted or invalid messages. |
 | `workbench.agent.control` | Durable fanout exchange for cancellation commands delivered to every live worker. |
+| `workbench.knowledge` | Durable direct exchange for knowledge jobs and retry/dead-letter routing. |
+| `workbench.knowledge.jobs` | Durable primary queue consumed by knowledge workers. |
+| `workbench.knowledge.retry` | Durable retry queue that returns messages to the knowledge jobs queue after a bounded delay. |
+| `workbench.knowledge.dead` | Durable queue for exhausted or invalid knowledge job messages. |
 
-Queue names and worker concurrency are configurable. Message bodies contain identifiers only; source documents and prompts are loaded from authorized durable storage by the worker.
+Agent queue names and worker concurrency are configurable. Knowledge transport uses the fixed `workbench.knowledge` names above. Message bodies contain identifiers only; source documents and prompts are loaded from authorized durable storage by the worker.
+
+Knowledge producers persist the `knowledge.job.requested` outbox topic with the strict payload `{ "jobId": "<UUID>" }`. The dispatcher validates that payload and publishes it through confirms to `workbench.knowledge` using the `jobs` routing key. Knowledge retry count, delay, and prefetch are configured independently with `KNOWLEDGE_QUEUE_MAX_RETRIES`, `KNOWLEDGE_QUEUE_RETRY_DELAY_MS`, and `KNOWLEDGE_QUEUE_PREFETCH`.
 
 ## Delivery rules
 
