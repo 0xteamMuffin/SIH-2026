@@ -20,6 +20,10 @@ const schema = z.object({
   MINIO_BUCKET: z.string().min(3),
   QDRANT_URL: z.string().url(),
   SANDBOX_RUNNER_URL: z.string().url(),
+  DOCLING_BASE_URL: z.string().url().refine((value) => ["http:", "https:"].includes(new URL(value).protocol), "DOCLING_BASE_URL must use HTTP or HTTPS").transform((value) => value.replace(/\/+$/, "")),
+  DOCLING_API_KEY: z.string().min(16),
+  DOCLING_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(310_000),
+  EXTRACTION_STALE_TIMEOUT_MS: z.coerce.number().int().min(60_000).max(3_600_000).default(360_000),
   AMQP_URL: z.string().url(),
   AGENT_QUEUE_PREFIX: z.string().regex(/^[a-z0-9._-]+$/i).default("workbench.agent"),
   QUEUE_PREFETCH: z.coerce.number().int().min(1).max(32).default(1),
@@ -43,6 +47,9 @@ const schema = z.object({
   }
   if (value.RUN_HEARTBEAT_INTERVAL_MS >= value.RUN_LEASE_DURATION_MS) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "RUN_HEARTBEAT_INTERVAL_MS must be shorter than RUN_LEASE_DURATION_MS" });
+  }
+  if (value.EXTRACTION_STALE_TIMEOUT_MS <= value.DOCLING_REQUEST_TIMEOUT_MS) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "EXTRACTION_STALE_TIMEOUT_MS must be longer than DOCLING_REQUEST_TIMEOUT_MS" });
   }
 });
 

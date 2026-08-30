@@ -35,6 +35,10 @@ x-backend-env: &backend-env
   RUN_LEASE_DURATION_MS: ${RUN_LEASE_DURATION_MS:-30000}
   RUN_HEARTBEAT_INTERVAL_MS: ${RUN_HEARTBEAT_INTERVAL_MS:-10000}
   RUN_RECOVERY_POLL_INTERVAL_MS: ${RUN_RECOVERY_POLL_INTERVAL_MS:-15000}
+  DOCLING_BASE_URL: ${DOCLING_BASE_URL:-http://docling:5001}
+  DOCLING_API_KEY: ${DOCLING_API_KEY:-development-docling-key}
+  DOCLING_REQUEST_TIMEOUT_MS: ${DOCLING_REQUEST_TIMEOUT_MS:-310000}
+  EXTRACTION_STALE_TIMEOUT_MS: ${EXTRACTION_STALE_TIMEOUT_MS:-360000}
 
 services:
   postgres:
@@ -90,6 +94,34 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    networks: [internal]
+
+  docling:
+    image: quay.io/docling-project/docling-serve-cpu:v1.31.0@sha256:32ba1a1dded8d8fd21f9d8da1b9837e04cfee164ef891d9513174c3d989dcee9
+    restart: unless-stopped
+    environment:
+      UVICORN_WORKERS: "1"
+      DOCLING_DEVICE: cpu
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "1"
+      DOCLING_SERVE_MAX_FILE_SIZE: "26214400"
+      DOCLING_SERVE_MAX_SOURCES_PER_REQUEST: "1"
+      DOCLING_SERVE_MAX_DOCUMENT_TIMEOUT: "300"
+      DOCLING_SERVE_MAX_SYNC_WAIT: "300"
+      DOCLING_SERVE_ENABLE_REMOTE_SERVICES: "false"
+      DOCLING_SERVE_ALLOW_EXTERNAL_PLUGINS: "false"
+      DOCLING_SERVE_API_KEY: ${DOCLING_API_KEY:-development-docling-key}
+      DOCLING_SERVE_OTEL_ENABLE_METRICS: "false"
+      DOCLING_SERVE_OTEL_ENABLE_TRACES: "false"
+      DOCLING_SERVE_OTEL_ENABLE_PROMETHEUS: "false"
+      DOCLING_SERVE_OTEL_ENABLE_OTLP_METRICS: "false"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      DO_NOT_TRACK: "1"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/ready', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 30
+      start_period: 60s
     networks: [internal]
 
   sandbox-runner:
