@@ -8,6 +8,7 @@ import { AppError } from "../../lib/errors.js";
 import { audit } from "../../lib/audit.js";
 import { prisma } from "../../lib/prisma.js";
 import { createArtifact, findArtifact, getArtifact } from "./artifacts.service.js";
+import { validateSourceArtifact } from "./artifact-validation.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
 export const artifactsRouter = Router();
@@ -16,7 +17,8 @@ artifactsRouter.post("/workspaces/:workspaceId/artifacts", authenticate, require
   try {
     if (!request.file) throw new AppError(400, "A file is required", "INVALID_INPUT");
     const classification = z.nativeEnum(DataClassification).parse(request.body.classification);
-    const artifact = await createArtifact({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, filename: request.file.originalname, mimeType: request.file.mimetype || "application/octet-stream", kind: "SOURCE", classification, bytes: request.file.buffer });
+    const detected = await validateSourceArtifact(request.file.originalname, request.file.buffer);
+    const artifact = await createArtifact({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, filename: request.file.originalname, mimeType: detected.mimeType, detectedMimeType: detected.mimeType, kind: "SOURCE", classification, bytes: request.file.buffer });
     await audit({ actorId: request.user!.id, workspaceId: artifact.workspaceId, eventType: "ARTIFACT_UPLOADED", metadata: { artifactId: artifact.id, filename: artifact.filename, classification } });
     response.status(201).json({ artifact });
   } catch (error) { next(error); }
