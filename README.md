@@ -8,6 +8,8 @@ Backend delivery is tracked in [the backend roadmap](./docs/BACKEND_ROADMAP.md).
 
 Inference providers and models are configured through [the vendor-neutral model registry](./docs/MODEL_CONFIGURATION.md).
 
+Durable agent processing is defined in [the RabbitMQ job execution design](./docs/JOB_EXECUTION.md).
+
 
 ## Quick start
 

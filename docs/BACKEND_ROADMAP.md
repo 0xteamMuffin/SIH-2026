@@ -44,7 +44,7 @@ Acceptance gate: at least two task capabilities select different configured mode
 
 Status: pending
 
-- [ ] Add BullMQ with a lightweight Redis-compatible service.
+- [ ] Add RabbitMQ with durable exchanges, queues, publisher confirms, and manual acknowledgements.
 - [ ] Move agent processing from the API process into a dedicated worker.
 - [ ] Make enqueueing idempotent and recover database/queue inconsistencies.
 - [ ] Add bounded retries, backoff, timeouts, progress events, and failure reasons.
@@ -167,8 +167,8 @@ Acceptance gate: a clean machine can install and run the documented demonstratio
 1. Add a validated model registry with capability-based priorities.
 2. Add provider timeout, normalized responses, and failure tests.
 3. Persist model invocation usage and audit metadata.
-4. Add Redis-compatible queue infrastructure and worker entrypoint.
-5. Move run processing into durable BullMQ jobs.
+4. Add RabbitMQ infrastructure, transactional outbox, and worker entrypoint.
+5. Move run processing into durable RabbitMQ jobs.
 6. Add cancellation, retries, recovery, and progress events.
 
 The sequence may be adjusted only when a discovered dependency or security defect must be resolved first.
