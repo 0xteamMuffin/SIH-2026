@@ -40,7 +40,7 @@ export default function WorkbenchPage() {
   // Interaction State
   const [task, setTask] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [classification, setClassification] = useState<DataClassification>("INTERNAL");
+  const [classification, setClassification] = useState<DataClassification>("SYNTHETIC");
   const [runLoading, setRunLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -227,10 +227,10 @@ export default function WorkbenchPage() {
             )}
 
             <select aria-label="Data classification" value={classification} onChange={e => setClassification(e.target.value as DataClassification)} style={{ background: "var(--canvas)", border: "1px solid var(--line)", borderRadius: 6, color: "var(--ink-2)", padding: "6px 8px", fontSize: 11 }}>
-              <option value="INTERNAL">Internal</option>
-              <option value="CONFIDENTIAL">Confidential</option>
-              <option value="PUBLIC">Public</option>
               <option value="SYNTHETIC">Synthetic</option>
+              <option value="PUBLIC">Public</option>
+              <option value="INTERNAL">Internal (local model required)</option>
+              <option value="CONFIDENTIAL">Confidential (local model required)</option>
             </select>
 
             <input value={task} onChange={e => setTask(e.target.value)} placeholder="Ask the agent to do something..." style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--ink)", fontSize: 14, minWidth: 0 }} />

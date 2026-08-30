@@ -6,8 +6,8 @@ import { api } from "../../../lib/api";
 import { useAuth } from "../../../components/AuthProvider";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("admin@sih.local");
-  const [password, setPassword] = useState("ChangeMe123!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
