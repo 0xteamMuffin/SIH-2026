@@ -8,7 +8,7 @@ Agent work uses PostgreSQL as the source of truth and RabbitMQ as the delivery t
 - The outbox dispatcher publishes unpublished events through a RabbitMQ confirm channel.
 - The worker consumes persistent messages with manual acknowledgements and bounded prefetch.
 - The worker claims runs through an atomic PostgreSQL status transition before executing tools.
-- A periodic dispatcher republishes pending outbox events after API or broker recovery.
+- The worker's periodic dispatcher republishes pending outbox events after worker or broker recovery.
 
 ## Topology
 
@@ -28,7 +28,7 @@ Queue names and worker concurrency are configurable. Message bodies contain iden
 - Redelivery is expected. Database compare-and-set transitions make processing idempotent.
 - Retry attempts are recorded in message headers and bounded by configuration.
 - Invalid payloads are dead-lettered without execution.
-- Graceful shutdown stops new deliveries and allows active jobs a bounded completion window.
+- Graceful shutdown stops new deliveries and allows active jobs a bounded completion window before their unacknowledged deliveries are returned to RabbitMQ.
 
 ## Failure recovery
 

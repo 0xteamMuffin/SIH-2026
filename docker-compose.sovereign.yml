@@ -1,5 +1,10 @@
 services:
   backend:
+    environment:
+      APP_MODE: sovereign
+      ALLOW_REMOTE_INFERENCE: "false"
+      REMOTE_MODEL_API_KEY: !reset null
+  worker:
     networks: !override [internal]
     environment:
       APP_MODE: sovereign

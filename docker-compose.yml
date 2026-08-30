@@ -20,6 +20,13 @@ x-backend-env: &backend-env
   ALLOW_REMOTE_INFERENCE: ${ALLOW_REMOTE_INFERENCE:-false}
   MODEL_REQUEST_TIMEOUT_MS: ${MODEL_REQUEST_TIMEOUT_MS:-120000}
   REMOTE_MODEL_API_KEY: ${REMOTE_MODEL_API_KEY:-}
+  QUEUE_PREFETCH: ${QUEUE_PREFETCH:-1}
+  QUEUE_MAX_RETRIES: ${QUEUE_MAX_RETRIES:-3}
+  QUEUE_RETRY_DELAY_MS: ${QUEUE_RETRY_DELAY_MS:-15000}
+  OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-1000}
+  OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-25}
+  OUTBOX_MAX_BACKOFF_MS: ${OUTBOX_MAX_BACKOFF_MS:-60000}
+  WORKER_SHUTDOWN_TIMEOUT_MS: ${WORKER_SHUTDOWN_TIMEOUT_MS:-30000}
 
 services:
   postgres:
@@ -96,13 +103,23 @@ services:
       postgres: { condition: service_healthy }
       minio-init: { condition: service_completed_successfully }
       qdrant: { condition: service_started }
+    environment: *backend-env
+    ports: ["4000:4000"]
+    networks: [internal]
+
+  worker:
+    build: ./backend
+    command: ["sh", "-c", "npx prisma migrate deploy && npm run start:worker"]
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+      qdrant: { condition: service_started }
       rabbitmq: { condition: service_healthy }
       sandbox-runner: { condition: service_started }
     environment: *backend-env
     extra_hosts: ["host.docker.internal:host-gateway"]
-    ports: ["4000:4000"]
-    # Development adapter only: this is the sole app service with egress.
-    # docker-compose.sovereign.yml removes this network.
+    # Development inference adapters are isolated to the execution worker.
     networks: [internal, development-egress]
 
   frontend:
