@@ -1,4 +1,8 @@
+x-backend-env: !reset null
+
 services:
+  minio:
+    ports: !reset []
   backend:
     environment:
       APP_MODE: sovereign
@@ -11,6 +15,7 @@ services:
       CLOUDFLARE_AI_BASE_URL: !reset null
   worker:
     networks: !override [internal]
+    extra_hosts: !reset []
     environment:
       APP_MODE: sovereign
       ALLOW_REMOTE_INFERENCE: "false"

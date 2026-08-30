@@ -1,0 +1,6 @@
+SYNTHETIC FIXTURE - NOT OPERATIONAL DATA
+
+Asset: PUMP-DEMO-101
+Inspection date: 2026-08-30
+Finding: The invented vibration reading is 2.4 mm/s.
+Action: Repeat the fictional inspection after 30 days.

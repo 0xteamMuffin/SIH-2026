@@ -1,0 +1,22 @@
+# Test-only runner for black-box verification. No internal service is host-published.
+services:
+  acceptance:
+    build: ./backend
+    command: ["node", "/verification/backend-acceptance.mjs"]
+    environment:
+      ACCEPTANCE_API_URL: http://backend:4000
+      ACCEPTANCE_AMQP_URL: amqp://sih:change-me-rabbitmq@rabbitmq:5672
+      ACCEPTANCE_SANDBOX_URL: http://sandbox-runner:4100
+      ACCEPTANCE_SANDBOX_TOKEN: change-me-to-a-long-random-sandbox-token
+      ACCEPTANCE_BACKEND_ROOT: /app
+      ACCEPTANCE_FIXTURE_ROOT: /fixtures
+    volumes:
+      - ./ops/backend-acceptance.mjs:/verification/backend-acceptance.mjs:ro
+      - ./backend/test/fixtures:/fixtures:ro
+    depends_on:
+      backend: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      sandbox-runner: { condition: service_healthy }
+      worker: { condition: service_started }
+    networks: [internal]
+    profiles: [acceptance]
