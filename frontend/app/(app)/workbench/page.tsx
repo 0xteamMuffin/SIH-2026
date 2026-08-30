@@ -44,7 +44,7 @@ export default function WorkbenchPage() {
       try {
         const updated = await api.getRun(run.id);
         setRun(updated);
-      } catch {}
+      } catch { }
     }, 1500);
     return () => clearInterval(timer);
   }, [run]);
@@ -96,35 +96,80 @@ export default function WorkbenchPage() {
   }
 
   const isRunActive = run ? !TERMINAL.has(run.status) : false;
+  const selectedWsName = workspaces.find((w) => w.id === selectedWs)?.name;
 
   return (
     <div className="workbench">
-      <WorkspacePanel
-        workspaces={workspaces}
-        selected={selectedWs}
-        loading={wsLoading}
-        newName={newWsName}
-        error={wsError}
-        onSelect={setSelectedWs}
-        onNewName={setNewWsName}
-        onCreate={handleCreateWorkspace}
-      />
+      {/* ── Top bar ── */}
+      <div className="wb-topbar" style={{ gridColumn: "1 / -1" }}>
+        <div className="wb-topbar-left">
+          <span className="wb-topbar-title">workbench</span>
+          {selectedWsName && (
+            <>
+              <span className="wb-topbar-sep">/</span>
+              <span>{selectedWsName}</span>
+            </>
+          )}
+          {run && (
+            <>
+              <span className="wb-topbar-sep">/</span>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--ink-3)" }}>
+                {run.id.slice(0, 8)}
+              </span>
+            </>
+          )}
+        </div>
+        <div className="wb-topbar-right">
+          {run && (
+            <>
+              <span className="chip">{run.modelProfile}</span>
+              <span className="chip">{run.taskCapability}</span>
+            </>
+          )}
+          {run && (
+            <span className={`status status-${run.status.toLowerCase()}`}>
+              <span style={{
+                width: 5, height: 5, borderRadius: "50%",
+                background: "currentColor", display: "inline-block", flexShrink: 0,
+                ...(isRunActive ? { animation: "glow-pulse 2s ease-in-out infinite" } : {}),
+              }} />
+              {run.status.toLowerCase()}
+            </span>
+          )}
+        </div>
+      </div>
 
-      <div className="task-panel">
-        <TaskForm
-          task={task}
-          file={file}
-          loading={runLoading}
-          hasWorkspace={!!selectedWs}
-          error={runError}
-          isRunning={isRunActive}
-          onTask={setTask}
-          onFile={setFile}
-          onSubmit={handleSubmit}
-          onCancel={handleCancel}
+      {/* ── Body ── */}
+      <div className="wb-content">
+        <WorkspacePanel
+          workspaces={workspaces}
+          selected={selectedWs}
+          loading={wsLoading}
+          newName={newWsName}
+          error={wsError}
+          onSelect={setSelectedWs}
+          onNewName={setNewWsName}
+          onCreate={handleCreateWorkspace}
         />
 
-        {run && <RunTrace run={run} />}
+        <div className="task-panel">
+          {run && <RunTrace run={run} />}
+
+          <div style={{ marginTop: "auto", width: "100%", flexShrink: 0 }}>
+            <TaskForm
+              task={task}
+              file={file}
+              loading={runLoading}
+              hasWorkspace={!!selectedWs}
+              error={runError}
+              isRunning={isRunActive}
+              onTask={setTask}
+              onFile={setFile}
+              onSubmit={handleSubmit}
+              onCancel={handleCancel}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
