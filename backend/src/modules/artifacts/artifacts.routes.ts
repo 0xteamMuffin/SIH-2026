@@ -16,7 +16,34 @@ artifactsRouter.post("/workspaces/:workspaceId/artifacts", requireWorkspaceAcces
     if (!request.file) throw new AppError(400, "A file is required", "INVALID_INPUT");
     const artifact = await createArtifact({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, filename: request.file.originalname, mimeType: request.file.mimetype || "application/octet-stream", kind: "SOURCE", bytes: request.file.buffer });
     await audit({ actorId: request.user!.id, workspaceId: artifact.workspaceId, eventType: "ARTIFACT_UPLOADED", metadata: { artifactId: artifact.id, filename: artifact.filename } });
-    response.status(201).json({ artifact });
+    
+    const serializedArtifact = {
+      ...artifact,
+      sizeBytes: Number(artifact.sizeBytes)
+    };
+    response.status(201).json({ artifact: serializedArtifact });
+  } catch (error) { next(error); }
+});
+
+artifactsRouter.get("/workspaces/:workspaceId/artifacts", requireWorkspaceAccess, async (request, response, next) => {
+  try {
+    const workspaceId = String(request.params.workspaceId);
+    const artifacts = await prisma.artifact.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        creator: {
+          select: { id: true, email: true, role: true }
+        }
+      }
+    });
+
+    const serializedArtifacts = artifacts.map(artifact => ({
+      ...artifact,
+      sizeBytes: Number(artifact.sizeBytes)
+    }));
+
+    response.json({ artifacts: serializedArtifacts });
   } catch (error) { next(error); }
 });
 

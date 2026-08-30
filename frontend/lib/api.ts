@@ -1,0 +1,132 @@
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("token");
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = getToken();
+  const extraHeaders: Record<string, string> = {};
+  if (token) extraHeaders["Authorization"] = `Bearer ${token}`;
+  if (options?.body && typeof options.body === "string") {
+    extraHeaders["Content-Type"] = "application/json";
+  }
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    headers: { ...extraHeaders, ...options?.headers },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.message ?? `Request failed ${res.status}`);
+  return data as T;
+}
+
+export const api = {
+  login: (email: string, password: string) =>
+    request<{ token: string }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+
+  getWorkspaces: () =>
+    request<{ workspaces: Workspace[] }>("/api/workspaces"),
+
+  createWorkspace: (name: string) =>
+    request<{ workspace: Workspace }>("/api/workspaces", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  createRun: (workspaceId: string, task: string, artifactId?: string) =>
+    request<{ run: Run }>(`/api/workspaces/${workspaceId}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ task, artifactId }),
+    }),
+
+  getRun: (runId: string) => request<Run>(`/api/runs/${runId}`),
+
+  getWorkspaceArtifacts: (workspaceId: string) =>
+    request<{ artifacts: Artifact[] }>(`/api/workspaces/${workspaceId}/artifacts`),
+
+  getWorkspaceRuns: (workspaceId: string) =>
+    request<{ runs: Run[] }>(`/api/workspaces/${workspaceId}/runs`),
+
+  cancelRun: (runId: string) =>
+    request<{ run: Run }>(`/api/runs/${runId}/cancel`, { method: "POST" }),
+
+  uploadArtifact: async (workspaceId: string, file: File): Promise<{ artifact: Artifact }> => {
+    const token = getToken();
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/api/workspaces/${workspaceId}/artifacts`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message ?? "Upload failed");
+    return data as { artifact: Artifact };
+  },
+
+  downloadArtifact: async (artifactId: string, filename: string) => {
+    const token = getToken();
+    const res = await fetch(`${BASE}/api/artifacts/${artifactId}/download`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error("Download failed");
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+};
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export interface Workspace {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+export interface Artifact {
+  id: string;
+  filename: string;
+  mimeType: string;
+  kind: string;
+}
+
+export interface ToolCall {
+  toolName: string;
+  status: "RUNNING" | "COMPLETED" | "FAILED";
+  input: unknown;
+  output: unknown;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface Evidence {
+  id: string;
+  sourceRef: string;
+  title: string;
+  summary: string;
+  facts: string[];
+}
+
+export interface Run {
+  id: string;
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
+  task: string;
+  taskCapability: string;
+  modelProfile: string;
+  modelReason: string;
+  toolCalls?: ToolCall[];
+  evidence?: Evidence[];
+  result?: {
+    analysis?: string;
+    artifact?: Artifact;
+  };
+  createdAt: string;
+}
