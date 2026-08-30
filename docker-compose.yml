@@ -247,7 +247,7 @@ services:
     build: ./frontend
     depends_on: [backend]
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      BACKEND_INTERNAL_URL: http://backend:4000
     ports: ["3000:3000"]
     # The UI needs an ingress network so its published browser port works.
     # It has no direct credentials for internal data services.
