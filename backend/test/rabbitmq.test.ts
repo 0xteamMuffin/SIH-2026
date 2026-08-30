@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { env } from "../src/config/env.js";
 import { decodeAgentRunRequested, parseAgentRunRequested } from "../src/infrastructure/queue/agent-run-message.js";
 import { decodeKnowledgeJobRequested, parseKnowledgeJobRequested } from "../src/infrastructure/queue/knowledge-job-message.js";
-import { publishAgentRunCancelled, publishAgentRunRequested, publishKnowledgeJobRequested } from "../src/infrastructure/queue/publisher.js";
-import { assertKnowledgeRabbitTopology, assertRabbitTopology, knowledgeQueueTopology, queueTopology } from "../src/infrastructure/queue/rabbitmq.js";
+import { decodeArtifactDeletionRequested, parseArtifactDeletionRequested } from "../src/infrastructure/queue/artifact-deletion-message.js";
+import { publishAgentRunCancelled, publishAgentRunRequested, publishArtifactDeletionRequested, publishKnowledgeJobRequested } from "../src/infrastructure/queue/publisher.js";
+import { artifactDeletionQueueTopology, assertArtifactDeletionRabbitTopology, assertKnowledgeRabbitTopology, assertRabbitTopology, knowledgeQueueTopology, queueTopology } from "../src/infrastructure/queue/rabbitmq.js";
 
 describe("RabbitMQ topology", () => {
   it("declares durable primary, retry, and dead-letter queues", async () => {
@@ -106,6 +107,30 @@ describe("RabbitMQ topology", () => {
       knowledgeQueueTopology.jobsRoutingKey,
       Buffer.from(JSON.stringify({ jobId })),
       expect.objectContaining({ persistent: true, type: "knowledge.job.requested", messageId: "event-2" }),
+      expect.any(Function),
+    );
+  });
+
+  it("declares and publishes identifier-only artifact deletion jobs", async () => {
+    const deletionJobId = "40000000-0000-4000-8000-000000000001";
+    const channel = {
+      assertExchange: vi.fn().mockResolvedValue(undefined),
+      assertQueue: vi.fn().mockResolvedValue(undefined),
+      bindQueue: vi.fn().mockResolvedValue(undefined),
+      publish: vi.fn((_exchange, _routingKey, _content, _options, confirm) => { confirm(undefined, {}); return true; }),
+    };
+
+    await assertArtifactDeletionRabbitTopology(channel as never);
+    expect(decodeArtifactDeletionRequested(Buffer.from(JSON.stringify({ deletionJobId })))).toEqual({ deletionJobId });
+    expect(() => parseArtifactDeletionRequested({ deletionJobId, objectKey: "must-not-enter-the-queue" })).toThrow();
+    await publishArtifactDeletionRequested(channel as never, { deletionJobId }, { messageId: "event-3" });
+
+    expect(channel.assertQueue).toHaveBeenCalledWith(artifactDeletionQueueTopology.jobsQueue, expect.objectContaining({ durable: true }));
+    expect(channel.publish).toHaveBeenCalledWith(
+      artifactDeletionQueueTopology.exchange,
+      artifactDeletionQueueTopology.jobsRoutingKey,
+      Buffer.from(JSON.stringify({ deletionJobId })),
+      expect.objectContaining({ persistent: true, type: "artifact.deletion.requested", messageId: "event-3" }),
       expect.any(Function),
     );
   });

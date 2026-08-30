@@ -1,11 +1,12 @@
 import type { OutboxEvent, PrismaClient } from "@prisma/client";
+import { ARTIFACT_DELETION_REQUESTED_TOPIC, parseArtifactDeletionRequested } from "./artifact-deletion-message.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
 import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_REQUESTED_TOPIC, AGENT_RUN_RESUMED_TOPIC } from "./agent-run-message.js";
 import { KNOWLEDGE_JOB_REQUESTED_TOPIC, parseKnowledgeJobRequested } from "./knowledge-job-message.js";
-import { publishAgentRunCancelled, publishAgentRunRequested, publishKnowledgeJobRequested } from "./publisher.js";
-import { knowledgeRabbitChannel, rabbitChannel } from "./rabbitmq.js";
+import { publishAgentRunCancelled, publishAgentRunRequested, publishArtifactDeletionRequested, publishKnowledgeJobRequested } from "./publisher.js";
+import { artifactDeletionRabbitChannel, knowledgeRabbitChannel, rabbitChannel } from "./rabbitmq.js";
 
 type OutboxStore = Pick<PrismaClient, "outboxEvent">;
 type PublishOutboxEvent = (event: OutboxEvent) => Promise<void>;
@@ -17,6 +18,11 @@ export function outboxBackoffMs(attempts: number) {
 }
 
 async function publishEvent(event: OutboxEvent) {
+  if (event.topic === ARTIFACT_DELETION_REQUESTED_TOPIC) {
+    const channel = await artifactDeletionRabbitChannel();
+    await publishArtifactDeletionRequested(channel, parseArtifactDeletionRequested(event.payload), { messageId: event.id });
+    return;
+  }
   if (event.topic === KNOWLEDGE_JOB_REQUESTED_TOPIC) {
     const channel = await knowledgeRabbitChannel();
     await publishKnowledgeJobRequested(channel, parseKnowledgeJobRequested(event.payload), { messageId: event.id });
@@ -32,7 +38,7 @@ async function publishEvent(event: OutboxEvent) {
 
 export async function dispatchOutboxBatch(store: OutboxStore = prisma, publish: PublishOutboxEvent = publishEvent, now = new Date()) {
   const events = await store.outboxEvent.findMany({
-    where: { topic: { in: [AGENT_RUN_REQUESTED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_RESUMED_TOPIC, AGENT_RUN_CANCELLED_TOPIC, KNOWLEDGE_JOB_REQUESTED_TOPIC] }, publishedAt: null, availableAt: { lte: now } },
+    where: { topic: { in: [AGENT_RUN_REQUESTED_TOPIC, AGENT_RUN_RECOVERED_TOPIC, AGENT_RUN_RESUMED_TOPIC, AGENT_RUN_CANCELLED_TOPIC, KNOWLEDGE_JOB_REQUESTED_TOPIC, ARTIFACT_DELETION_REQUESTED_TOPIC] }, publishedAt: null, availableAt: { lte: now } },
     orderBy: { createdAt: "asc" },
     take: env.OUTBOX_BATCH_SIZE,
   });

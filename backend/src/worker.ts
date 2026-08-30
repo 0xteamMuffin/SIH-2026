@@ -1,13 +1,15 @@
 import { env } from "./config/env.js";
 import { consumeAgentRuns } from "./infrastructure/queue/agent-run-consumer.js";
 import { consumeAgentRunCancellations } from "./infrastructure/queue/agent-run-cancellation-consumer.js";
+import { consumeArtifactDeletions } from "./infrastructure/queue/artifact-deletion-consumer.js";
 import { runOutboxDispatcher } from "./infrastructure/queue/outbox-dispatcher.js";
 import { recoverStaleRuns, runStaleRunRecovery } from "./infrastructure/queue/run-recovery.js";
-import { closeRabbitMq, rabbitChannel } from "./infrastructure/queue/rabbitmq.js";
+import { artifactDeletionRabbitChannel, closeRabbitMq, rabbitChannel } from "./infrastructure/queue/rabbitmq.js";
 import { startKnowledgeWorker } from "./knowledge-worker.js";
 import { logger } from "./lib/logger.js";
 import { prisma } from "./lib/prisma.js";
 import { failRun, processRun } from "./modules/agent/agent.service.js";
+import { failArtifactDeletionJob, processArtifactDeletionJob, reconcileArtifactDeletions, runArtifactDeletionReconciliation } from "./modules/artifacts/artifact-deletion.processor.js";
 import { ensureActiveKnowledgeIndex } from "./modules/knowledge/knowledge-index-provisioner.js";
 import { failExhaustedKnowledgeJob, processKnowledgeJob } from "./modules/knowledge/knowledge-job-dispatcher.js";
 
@@ -19,9 +21,13 @@ async function main() {
   const consumer = await consumeAgentRuns(channel, processRun, failRun);
   const cancellationConsumer = await consumeAgentRunCancellations(channel, consumer.abort);
   const knowledgeConsumer = await startKnowledgeWorker(processKnowledgeJob, failExhaustedKnowledgeJob);
+  const artifactRecovery = await reconcileArtifactDeletions();
+  if (artifactRecovery.recovered > 0 || artifactRecovery.repaired > 0) logger.warn(artifactRecovery, "Reconciled artifact deletions at startup");
+  const artifactDeletionConsumer = await consumeArtifactDeletions(await artifactDeletionRabbitChannel(), processArtifactDeletionJob, failArtifactDeletionJob);
   const dispatcherController = new AbortController();
   const dispatcher = runOutboxDispatcher(dispatcherController.signal);
   const recovery = runStaleRunRecovery(dispatcherController.signal);
+  const artifactReconciliation = runArtifactDeletionReconciliation(dispatcherController.signal);
   let shuttingDown = false;
 
   const shutdown = async (signal: string, exitCode = 0) => {
@@ -34,8 +40,10 @@ async function main() {
         consumer.stop(),
         cancellationConsumer.stop(),
         knowledgeConsumer.stop(),
+        artifactDeletionConsumer.stop(),
         dispatcher,
         recovery,
+        artifactReconciliation,
       ]);
     })();
     let timeoutHandle: NodeJS.Timeout | undefined;

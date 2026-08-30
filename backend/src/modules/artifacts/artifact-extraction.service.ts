@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { ArtifactExtractionStatus, ArtifactKind, Prisma } from "@prisma/client";
+import { ArtifactExtractionStatus, ArtifactKind, ArtifactLifecycleStatus, Prisma } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { extractWithDocling } from "../../infrastructure/docling/docling-client.js";
 import { getArtifact, putArtifact } from "../../infrastructure/storage/artifact-store.js";
@@ -27,7 +27,7 @@ async function readCompletedExtraction(artifact: { extractedObjectKey: string | 
 
 export async function extractArtifact(artifactId: string, signal?: AbortSignal): Promise<ExtractionResult> {
   signal?.throwIfAborted();
-  const initial = await prisma.artifact.findUnique({ where: { id: artifactId } });
+  const initial = await prisma.artifact.findFirst({ where: { id: artifactId, lifecycleStatus: ArtifactLifecycleStatus.ACTIVE } });
   if (!initial) throw new AppError(404, "Artifact not found", "NOT_FOUND");
   if (initial.kind !== ArtifactKind.SOURCE) throw new AppError(422, "Only source artifacts can be extracted", "EXTRACTION_NOT_REQUIRED");
   if (initial.extractionStatus === ArtifactExtractionStatus.COMPLETED) return readCompletedExtraction(initial, signal);
@@ -38,6 +38,7 @@ export async function extractArtifact(artifactId: string, signal?: AbortSignal):
     where: {
       id: artifactId,
       kind: ArtifactKind.SOURCE,
+      lifecycleStatus: ArtifactLifecycleStatus.ACTIVE,
       OR: [
         { extractionStatus: { in: [ArtifactExtractionStatus.PENDING, ArtifactExtractionStatus.FAILED] } },
         { extractionStatus: ArtifactExtractionStatus.PROCESSING, extractionStartedAt: { lte: staleBefore } },
@@ -79,7 +80,7 @@ export async function extractArtifact(artifactId: string, signal?: AbortSignal):
     await putArtifact(objectKey, extractedBytes, format === "markdown" ? "text/markdown; charset=utf-8" : "text/plain; charset=utf-8");
     signal?.throwIfAborted();
     const completed = await prisma.artifact.updateMany({
-      where: { id: artifactId, extractionStatus: ArtifactExtractionStatus.PROCESSING, extractionStartedAt },
+      where: { id: artifactId, lifecycleStatus: ArtifactLifecycleStatus.ACTIVE, extractionStatus: ArtifactExtractionStatus.PROCESSING, extractionStartedAt },
       data: { sha256: sourceSha256, detectedMimeType: validated.mimeType, extractionStatus: ArtifactExtractionStatus.COMPLETED, extractedObjectKey: objectKey, extractionMetadata: metadata, extractionError: null, extractionStartedAt: null, extractedAt: new Date() },
     });
     if (completed.count === 0) throw new AppError(409, "Artifact extraction claim was lost", "EXTRACTION_CLAIM_LOST");

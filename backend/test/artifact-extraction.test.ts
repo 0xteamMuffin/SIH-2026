@@ -2,7 +2,7 @@ import { ArtifactExtractionStatus, ArtifactKind } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { artifactMock, doclingMock, getArtifactMock, putArtifactMock } = vi.hoisted(() => ({
-  artifactMock: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), updateMany: vi.fn() },
+  artifactMock: { findFirst: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), updateMany: vi.fn() },
   doclingMock: vi.fn(),
   getArtifactMock: vi.fn(),
   putArtifactMock: vi.fn(),
@@ -22,6 +22,7 @@ const pendingTextArtifact = {
   extractionStartedAt: null,
   extractedObjectKey: null,
   extractionMetadata: null,
+  lifecycleStatus: "ACTIVE",
   objectKey: "workspace-1/source.txt",
   filename: "source.txt",
 };
@@ -33,7 +34,7 @@ describe("artifact extraction lifecycle", () => {
   });
 
   it("extracts UTF-8 locally and completes the claimed artifact", async () => {
-    artifactMock.findUnique.mockResolvedValue(pendingTextArtifact);
+    artifactMock.findFirst.mockResolvedValue(pendingTextArtifact);
     artifactMock.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 });
     getArtifactMock.mockResolvedValue(Buffer.from("Pump,Status\nP-101,Operational\n"));
 
@@ -49,7 +50,7 @@ describe("artifact extraction lifecycle", () => {
   });
 
   it("reuses a completed canonical extraction", async () => {
-    artifactMock.findUnique.mockResolvedValue({ ...pendingTextArtifact, extractionStatus: ArtifactExtractionStatus.COMPLETED, extractedObjectKey: "workspace-1/extractions/artifact-1/hash.md", extractionMetadata: { format: "markdown" } });
+    artifactMock.findFirst.mockResolvedValue({ ...pendingTextArtifact, extractionStatus: ArtifactExtractionStatus.COMPLETED, extractedObjectKey: "workspace-1/extractions/artifact-1/hash.md", extractionMetadata: { format: "markdown" } });
     getArtifactMock.mockResolvedValue(Buffer.from("# Existing extraction"));
 
     await expect(extractArtifact("artifact-1")).resolves.toMatchObject({ text: "# Existing extraction", objectKey: "workspace-1/extractions/artifact-1/hash.md" });
@@ -59,7 +60,7 @@ describe("artifact extraction lifecycle", () => {
   });
 
   it("allows an expired PROCESSING claim to be recovered", async () => {
-    artifactMock.findUnique.mockResolvedValue({ ...pendingTextArtifact, extractionStatus: ArtifactExtractionStatus.PROCESSING, extractionStartedAt: new Date(0) });
+    artifactMock.findFirst.mockResolvedValue({ ...pendingTextArtifact, extractionStatus: ArtifactExtractionStatus.PROCESSING, extractionStartedAt: new Date(0) });
     artifactMock.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 });
     getArtifactMock.mockResolvedValue(Buffer.from("Recovered text"));
 
@@ -72,7 +73,7 @@ describe("artifact extraction lifecycle", () => {
 
   it("persists a normalized failure for the active claim", async () => {
     const pdf = { ...pendingTextArtifact, filename: "source.pdf", objectKey: "workspace-1/source.pdf" };
-    artifactMock.findUnique.mockResolvedValue(pdf);
+    artifactMock.findFirst.mockResolvedValue(pdf);
     artifactMock.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 1 });
     getArtifactMock.mockResolvedValue(Buffer.from("%PDF-1.7\nfixture"));
     doclingMock.mockRejectedValue(new Error("socket internals"));

@@ -71,6 +71,19 @@ enum ArtifactExtractionStatus {
   FAILED
 }
 
+enum ArtifactLifecycleStatus {
+  ACTIVE
+  DELETING
+  DELETED
+}
+
+enum ArtifactDeletionJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
 enum ModelInvocationStatus {
   RUNNING
   SUCCEEDED
@@ -154,22 +167,23 @@ enum KnowledgeVectorDistance {
 }
 
 model User {
-  id                String            @id @default(uuid()) @db.Uuid
-  email             String            @unique
-  passwordHash      String            @map("password_hash")
-  role              UserRole          @default(OPERATOR)
-  disabledAt        DateTime?         @map("disabled_at")
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
-  workspaces        Workspace[]       @relation("WorkspaceCreator")
-  memberships       WorkspaceMember[]
-  refreshSessions   RefreshSession[]
-  artifacts         Artifact[]
-  runs              AgentRun[]
-  auditEvents       AuditEvent[]
-  knowledgeSources  KnowledgeSource[]
-  knowledgeQueries  KnowledgeQuery[]
-  approvalDecisions ToolApproval[]    @relation("ApprovalDecider")
+  id                   String                @id @default(uuid()) @db.Uuid
+  email                String                @unique
+  passwordHash         String                @map("password_hash")
+  role                 UserRole              @default(OPERATOR)
+  disabledAt           DateTime?             @map("disabled_at")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+  workspaces           Workspace[]           @relation("WorkspaceCreator")
+  memberships          WorkspaceMember[]
+  refreshSessions      RefreshSession[]
+  artifacts            Artifact[]
+  runs                 AgentRun[]
+  auditEvents          AuditEvent[]
+  knowledgeSources     KnowledgeSource[]
+  knowledgeQueries     KnowledgeQuery[]
+  approvalDecisions    ToolApproval[]        @relation("ApprovalDecider")
+  artifactDeletionJobs ArtifactDeletionJob[] @relation("ArtifactDeletionRequester")
 
   @@map("users")
 }
@@ -236,14 +250,50 @@ model Artifact {
   mimeType            String                   @map("mime_type")
   objectKey           String                   @unique @map("object_key")
   sizeBytes           BigInt                   @map("size_bytes")
+  versionSetId        String                   @map("version_set_id") @db.Uuid
+  version             Int                      @default(1)
+  previousVersionId   String?                  @unique @map("previous_version_id") @db.Uuid
+  lifecycleStatus     ArtifactLifecycleStatus  @default(ACTIVE) @map("lifecycle_status")
+  retentionUntil      DateTime?                @map("retention_until")
+  deletionRequestedAt DateTime?                @map("deletion_requested_at")
+  deletedAt           DateTime?                @map("deleted_at")
   createdAt           DateTime                 @default(now()) @map("created_at")
   workspace           Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   creator             User                     @relation(fields: [createdBy], references: [id])
   evidence            Evidence[]
   knowledgeSource     KnowledgeSource?
+  sourceRuns          AgentRun[]               @relation("AgentRunSourceArtifact")
+  previousVersion     Artifact?                @relation("ArtifactVersions", fields: [previousVersionId], references: [id], onDelete: Restrict)
+  nextVersion         Artifact?                @relation("ArtifactVersions")
+  deletionJob         ArtifactDeletionJob?
 
+  @@unique([versionSetId, version])
   @@index([workspaceId, extractionStatus])
+  @@index([workspaceId, lifecycleStatus, createdAt])
   @@map("artifacts")
+}
+
+model ArtifactDeletionJob {
+  id             String                    @id @default(uuid()) @db.Uuid
+  artifactId     String                    @unique @map("artifact_id") @db.Uuid
+  requestedBy    String                    @map("requested_by") @db.Uuid
+  status         ArtifactDeletionJobStatus @default(QUEUED)
+  attempts       Int                       @default(0)
+  maxAttempts    Int                       @default(4) @map("max_attempts")
+  availableAt    DateTime                  @default(now()) @map("available_at")
+  leaseId        String?                   @map("lease_id") @db.Uuid
+  leaseExpiresAt DateTime?                 @map("lease_expires_at")
+  lastError      String?                   @map("last_error")
+  startedAt      DateTime?                 @map("started_at")
+  completedAt    DateTime?                 @map("completed_at")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+  artifact       Artifact                  @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+  requester      User                      @relation("ArtifactDeletionRequester", fields: [requestedBy], references: [id], onDelete: Restrict)
+
+  @@index([status, availableAt])
+  @@index([status, leaseExpiresAt])
+  @@map("artifact_deletion_jobs")
 }
 
 model AgentRun {
@@ -278,9 +328,11 @@ model AgentRun {
   evidence           Evidence[]
   auditEvents        AuditEvent[]
   approvals          ToolApproval[]
+  sourceArtifact     Artifact?          @relation("AgentRunSourceArtifact", fields: [sourceArtifactId], references: [id], onDelete: Restrict)
 
   @@index([workspaceId, createdAt])
   @@index([status, leaseExpiresAt])
+  @@index([sourceArtifactId, status])
   @@map("agent_runs")
 }
 

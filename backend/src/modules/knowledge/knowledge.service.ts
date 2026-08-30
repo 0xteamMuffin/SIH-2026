@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import {
   ArtifactExtractionStatus,
   ArtifactKind,
+  ArtifactLifecycleStatus,
   DataClassification,
   KnowledgeIndexStatus,
   KnowledgeJobStatus,
@@ -29,6 +30,7 @@ const artifactSummarySelect = {
   detectedMimeType: true,
   sizeBytes: true,
   createdAt: true,
+  lifecycleStatus: true,
 } satisfies Prisma.ArtifactSelect;
 
 const sourceInclude = {
@@ -94,12 +96,15 @@ function readableQueryWhere(queryId: string, actor: Pick<AuthUser, "id" | "role"
     : { id: queryId, workspace: { members: { some: { userId: actor.id } } } };
 }
 
-function validateSourceArtifact(artifact: { kind: ArtifactKind; extractionStatus: ArtifactExtractionStatus }) {
+function validateSourceArtifact(artifact: { kind: ArtifactKind; extractionStatus: ArtifactExtractionStatus; lifecycleStatus: ArtifactLifecycleStatus }) {
   if (artifact.kind !== ArtifactKind.SOURCE) {
     throw new AppError(400, "Knowledge sources require a source artifact", "INVALID_ARTIFACT");
   }
   if (artifact.extractionStatus !== ArtifactExtractionStatus.COMPLETED) {
     throw new AppError(409, "Artifact extraction must be completed", "ARTIFACT_NOT_READY");
+  }
+  if (artifact.lifecycleStatus !== ArtifactLifecycleStatus.ACTIVE) {
+    throw new AppError(409, "Artifact is not active", "ARTIFACT_NOT_ACTIVE");
   }
 }
 
@@ -161,7 +166,7 @@ export async function createKnowledgeSource(input: {
         data: { topic: KNOWLEDGE_JOB_REQUESTED_TOPIC, aggregateId: jobId, payload: { jobId } },
       });
       return { knowledgeSource: { ...source, artifact, sourceIndexes: [sourceIndex] }, job };
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return jsonSafe(result) as { knowledgeSource: Record<string, unknown>; job: Record<string, unknown> };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {

@@ -41,7 +41,7 @@ docker compose -f docker-compose.yml -f docker-compose.sovereign.yml up --build
 
 Configure providers, endpoints, model IDs, capabilities, and routing priorities in `backend/config/models.json`. Provider credentials are referenced by environment-variable name and are never stored in that file.
 
-Qdrant requires `QDRANT_API_KEY`. Compose retains a development-only fallback for existing local `.env` files; replace it with a long random secret before shared, production, or sovereign use. The backend `/health` endpoint is process liveness and does not contact dependencies, while `/ready` returns `503` until authenticated Qdrant access succeeds.
+Qdrant requires `QDRANT_API_KEY`. Compose retains a development-only fallback for existing local `.env` files; replace it with a long random secret before shared, production, or sovereign use. The backend `/health` endpoint is public process liveness and does not contact dependencies. The administrator-authenticated `/ready` endpoint checks PostgreSQL, MinIO, RabbitMQ, Qdrant, the sandbox, and optionally Docling; it returns `503` when a required dependency is unavailable.
 
 ## Current boundaries
 

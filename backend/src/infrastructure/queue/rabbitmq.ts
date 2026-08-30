@@ -24,9 +24,20 @@ export const knowledgeQueueTopology = {
   deadRoutingKey: "dead",
 } as const;
 
+export const artifactDeletionQueueTopology = {
+  exchange: "workbench.artifacts",
+  jobsQueue: "workbench.artifacts.deletions",
+  jobsRoutingKey: "deletions",
+  retryQueue: "workbench.artifacts.deletions.retry",
+  retryRoutingKey: "deletions.retry",
+  deadQueue: "workbench.artifacts.deletions.dead",
+  deadRoutingKey: "deletions.dead",
+} as const;
+
 let connection: ChannelModel | undefined;
 let channel: ConfirmChannel | undefined;
 let knowledgeChannel: ConfirmChannel | undefined;
+let artifactDeletionChannel: ConfirmChannel | undefined;
 
 export async function assertRabbitTopology(target: ConfirmChannel) {
   await target.assertExchange(queueTopology.exchange, "direct", { durable: true });
@@ -76,6 +87,29 @@ export async function assertKnowledgeRabbitTopology(target: ConfirmChannel) {
   await target.bindQueue(knowledgeQueueTopology.deadQueue, knowledgeQueueTopology.exchange, knowledgeQueueTopology.deadRoutingKey);
 }
 
+export async function assertArtifactDeletionRabbitTopology(target: ConfirmChannel) {
+  await target.assertExchange(artifactDeletionQueueTopology.exchange, "direct", { durable: true });
+  await target.assertQueue(artifactDeletionQueueTopology.jobsQueue, {
+    durable: true,
+    arguments: {
+      "x-dead-letter-exchange": artifactDeletionQueueTopology.exchange,
+      "x-dead-letter-routing-key": artifactDeletionQueueTopology.deadRoutingKey,
+    },
+  });
+  await target.bindQueue(artifactDeletionQueueTopology.jobsQueue, artifactDeletionQueueTopology.exchange, artifactDeletionQueueTopology.jobsRoutingKey);
+  await target.assertQueue(artifactDeletionQueueTopology.retryQueue, {
+    durable: true,
+    arguments: {
+      "x-message-ttl": env.KNOWLEDGE_QUEUE_RETRY_DELAY_MS,
+      "x-dead-letter-exchange": artifactDeletionQueueTopology.exchange,
+      "x-dead-letter-routing-key": artifactDeletionQueueTopology.jobsRoutingKey,
+    },
+  });
+  await target.bindQueue(artifactDeletionQueueTopology.retryQueue, artifactDeletionQueueTopology.exchange, artifactDeletionQueueTopology.retryRoutingKey);
+  await target.assertQueue(artifactDeletionQueueTopology.deadQueue, { durable: true });
+  await target.bindQueue(artifactDeletionQueueTopology.deadQueue, artifactDeletionQueueTopology.exchange, artifactDeletionQueueTopology.deadRoutingKey);
+}
+
 async function rabbitConnection() {
   if (connection) return connection;
   connection = await connect(env.AMQP_URL);
@@ -84,6 +118,7 @@ async function rabbitConnection() {
     connection = undefined;
     channel = undefined;
     knowledgeChannel = undefined;
+    artifactDeletionChannel = undefined;
     logger.warn("RabbitMQ connection closed");
   });
   return connection;
@@ -105,14 +140,25 @@ export async function knowledgeRabbitChannel() {
   return knowledgeChannel;
 }
 
+export async function artifactDeletionRabbitChannel() {
+  if (artifactDeletionChannel) return artifactDeletionChannel;
+  artifactDeletionChannel = await (await rabbitConnection()).createConfirmChannel();
+  await assertArtifactDeletionRabbitTopology(artifactDeletionChannel);
+  await artifactDeletionChannel.prefetch(env.KNOWLEDGE_QUEUE_PREFETCH);
+  return artifactDeletionChannel;
+}
+
 export async function closeRabbitMq() {
   const activeChannel = channel;
   const activeKnowledgeChannel = knowledgeChannel;
+  const activeArtifactDeletionChannel = artifactDeletionChannel;
   const activeConnection = connection;
   channel = undefined;
   knowledgeChannel = undefined;
+  artifactDeletionChannel = undefined;
   connection = undefined;
   if (activeChannel) await activeChannel.close();
   if (activeKnowledgeChannel) await activeKnowledgeChannel.close();
+  if (activeArtifactDeletionChannel) await activeArtifactDeletionChannel.close();
   if (activeConnection) await activeConnection.close();
 }

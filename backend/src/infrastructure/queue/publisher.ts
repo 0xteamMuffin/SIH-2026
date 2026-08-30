@@ -1,10 +1,12 @@
 import type { ConfirmChannel, Options } from "amqplib";
+import { ARTIFACT_DELETION_REQUESTED_TOPIC, parseArtifactDeletionRequested, type ArtifactDeletionRequestedMessage } from "./artifact-deletion-message.js";
 import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_REQUESTED_TOPIC, parseAgentRunCancelled, parseAgentRunRequested, type AgentRunCancelledMessage, type AgentRunRequestedMessage } from "./agent-run-message.js";
 import { KNOWLEDGE_JOB_REQUESTED_TOPIC, parseKnowledgeJobRequested, type KnowledgeJobRequestedMessage } from "./knowledge-job-message.js";
-import { knowledgeQueueTopology, queueTopology } from "./rabbitmq.js";
+import { artifactDeletionQueueTopology, knowledgeQueueTopology, queueTopology } from "./rabbitmq.js";
 
 export type AgentRunDestination = "run" | "retry" | "dead";
 export type KnowledgeJobDestination = "jobs" | "retry" | "dead";
+export type ArtifactDeletionDestination = "jobs" | "retry" | "dead";
 
 function confirmedPublish(channel: ConfirmChannel, exchange: string, routingKey: string, content: Buffer, options: Options.Publish) {
   return new Promise<void>((resolve, reject) => {
@@ -87,6 +89,38 @@ export async function publishInvalidKnowledgeJobToDeadQueue(channel: ConfirmChan
     persistent: true,
     contentType: "application/json",
     type: KNOWLEDGE_JOB_REQUESTED_TOPIC,
+    messageId: options.messageId,
+    headers: { "x-invalid-message": true, "x-last-error": options.error.slice(0, 512) },
+  });
+}
+
+export async function publishArtifactDeletionRequested(
+  channel: ConfirmChannel,
+  message: ArtifactDeletionRequestedMessage,
+  options: { destination?: ArtifactDeletionDestination; messageId?: string; retryCount?: number; error?: string } = {},
+) {
+  const validated = parseArtifactDeletionRequested(message);
+  const destination = options.destination ?? "jobs";
+  const routingKey = destination === "jobs"
+    ? artifactDeletionQueueTopology.jobsRoutingKey
+    : destination === "retry" ? artifactDeletionQueueTopology.retryRoutingKey : artifactDeletionQueueTopology.deadRoutingKey;
+  await confirmedPublish(channel, artifactDeletionQueueTopology.exchange, routingKey, Buffer.from(JSON.stringify(validated)), {
+    persistent: true,
+    contentType: "application/json",
+    type: ARTIFACT_DELETION_REQUESTED_TOPIC,
+    messageId: options.messageId,
+    headers: {
+      ...(options.retryCount === undefined ? {} : { "x-retry-count": options.retryCount }),
+      ...(options.error === undefined ? {} : { "x-last-error": options.error.slice(0, 512) }),
+    },
+  });
+}
+
+export async function publishInvalidArtifactDeletionToDeadQueue(channel: ConfirmChannel, content: Buffer, options: { messageId?: string; error: string }) {
+  await confirmedPublish(channel, artifactDeletionQueueTopology.exchange, artifactDeletionQueueTopology.deadRoutingKey, content, {
+    persistent: true,
+    contentType: "application/json",
+    type: ARTIFACT_DELETION_REQUESTED_TOPIC,
     messageId: options.messageId,
     headers: { "x-invalid-message": true, "x-last-error": options.error.slice(0, 512) },
   });

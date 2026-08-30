@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { ApprovalStatus, DataClassification, EvidenceKind, Prisma, RunStatus, RunToolCallStatus, ToolRiskLevel, UserRole } from "@prisma/client";
+import { ApprovalStatus, ArtifactLifecycleStatus, DataClassification, EvidenceKind, Prisma, RunStatus, RunToolCallStatus, ToolRiskLevel, UserRole } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { audit } from "../../lib/audit.js";
@@ -118,7 +118,7 @@ export async function createRun(input: { workspaceId: string; userId: string; ta
   let classification = input.dataClassification;
   if (input.artifactId) {
     const source = await findArtifact(input.artifactId);
-    if (!source || source.workspaceId !== input.workspaceId) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
+    if (!source || source.workspaceId !== input.workspaceId || source.lifecycleStatus !== ArtifactLifecycleStatus.ACTIVE) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
     classification = mostRestrictiveClassification(classification, source.classification);
   }
   const configuredDecision = selectModel(input.task, Boolean(input.artifactId));
@@ -133,10 +133,15 @@ export async function createRun(input: { workspaceId: string; userId: string; ta
     throw error;
   }
   const runId = crypto.randomUUID();
-  const [run] = await prisma.$transaction([
-    prisma.agentRun.create({ data: { id: runId, workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, sourceArtifactId: input.artifactId, activeWorkspaceId: input.workspaceId, maxTurns: env.AGENT_MAX_TURNS, maxToolCalls: env.AGENT_MAX_TOOL_CALLS, deadlineAt: new Date(Date.now() + env.AGENT_RUN_DEADLINE_MS), state: { version: 1, phase: "SOURCE", turn: 0, phaseStarted: false } } }),
-    prisma.outboxEvent.create({ data: { topic: AGENT_RUN_REQUESTED_TOPIC, aggregateId: runId, payload: toJson({ runId }) } }),
-  ]);
+  const run = await prisma.$transaction(async (transaction) => {
+    if (input.artifactId) {
+      const available = await transaction.artifact.findFirst({ where: { id: input.artifactId, workspaceId: input.workspaceId, lifecycleStatus: ArtifactLifecycleStatus.ACTIVE }, select: { id: true } });
+      if (!available) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
+    }
+    const created = await transaction.agentRun.create({ data: { id: runId, workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, sourceArtifactId: input.artifactId, activeWorkspaceId: input.workspaceId, maxTurns: env.AGENT_MAX_TURNS, maxToolCalls: env.AGENT_MAX_TOOL_CALLS, deadlineAt: new Date(Date.now() + env.AGENT_RUN_DEADLINE_MS), state: { version: 1, phase: "SOURCE", turn: 0, phaseStarted: false } } });
+    await transaction.outboxEvent.create({ data: { topic: AGENT_RUN_REQUESTED_TOPIC, aggregateId: runId, payload: toJson({ runId }) } });
+    return created;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   await audit({ actorId: input.userId, workspaceId: input.workspaceId, runId: run.id, eventType: "AGENT_RUN_CREATED", metadata: { capability: decision.capability, classification, modelProfile: decision.profile.id, sovereign: decision.profile.sovereign } });
   return run;
 }

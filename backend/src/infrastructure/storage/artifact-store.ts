@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Readable } from "node:stream";
 import { env } from "../../config/env.js";
 import { AppError } from "../../lib/errors.js";
@@ -14,6 +14,10 @@ export async function getArtifact(objectKey: string, signal?: AbortSignal): Prom
   const chunks: Buffer[] = [];
   for await (const chunk of response.Body as Readable) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   return Buffer.concat(chunks);
+}
+
+export async function deleteObject(objectKey: string): Promise<void> {
+  await client.send(new DeleteObjectCommand({ Bucket: env.MINIO_BUCKET, Key: objectKey }));
 }
 
 export async function getArtifactBounded(objectKey: string, maxBytes: number, signal?: AbortSignal): Promise<Buffer> {

@@ -9,6 +9,7 @@ const { artifactServiceMock, workspaceMemberMock } = vi.hoisted(() => ({
     getArtifact: vi.fn(),
     getArtifactMetadata: vi.fn(),
     listArtifacts: vi.fn(),
+    requestArtifactDeletion: vi.fn(),
   },
   workspaceMemberMock: { findUnique: vi.fn() },
 }));
@@ -93,5 +94,45 @@ describe("artifact routes", () => {
 
     expect(response.status).toBe(404);
     expect(response.body).toEqual({ error: { code: "NOT_FOUND", message: "Artifact not found" } });
+  });
+
+  it("allows a workspace administrator to request asynchronous deletion", async () => {
+    workspaceMemberMock.findUnique.mockResolvedValue({ workspaceId, userId: "30000000-0000-4000-8000-000000000001", role: "ADMIN" });
+    artifactServiceMock.requestArtifactDeletion.mockResolvedValue({ artifact: { id: artifactId, lifecycleStatus: "DELETING" }, deletionJob: { id: "40000000-0000-4000-8000-000000000001", status: "QUEUED" } });
+
+    const response = await request(createTestApp()).delete(`/api/workspaces/${workspaceId}/artifacts/${artifactId}`);
+
+    expect(response.status).toBe(202);
+    expect(artifactServiceMock.requestArtifactDeletion).toHaveBeenCalledWith({ workspaceId, artifactId, requestedBy: "30000000-0000-4000-8000-000000000001" });
+  });
+
+  it("rejects artifact deletion by a workspace operator", async () => {
+    const response = await request(createTestApp()).delete(`/api/workspaces/${workspaceId}/artifacts/${artifactId}`);
+
+    expect(response.status).toBe(403);
+    expect(artifactServiceMock.requestArtifactDeletion).not.toHaveBeenCalled();
+  });
+
+  it("rejects an upload whose content does not match its extension before storage", async () => {
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+
+    const response = await request(createTestApp())
+      .post(`/api/workspaces/${workspaceId}/artifacts`)
+      .field("classification", "SYNTHETIC")
+      .attach("file", png, { filename: "inspection.pdf", contentType: "application/pdf" });
+
+    expect(response.status).toBe(415);
+    expect(response.body).toEqual({ error: { code: "FILE_TYPE_MISMATCH", message: "File content does not match its extension" } });
+    expect(artifactServiceMock.createArtifact).not.toHaveBeenCalled();
+  });
+
+  it("blocks cross-workspace artifact downloads before object storage is read", async () => {
+    artifactServiceMock.findArtifact.mockResolvedValue({ id: artifactId, workspaceId: "20000000-0000-4000-8000-000000000002" });
+    workspaceMemberMock.findUnique.mockResolvedValue(null);
+
+    const response = await request(createTestApp()).get(`/api/artifacts/${artifactId}/download`);
+
+    expect(response.status).toBe(403);
+    expect(artifactServiceMock.getArtifact).not.toHaveBeenCalled();
   });
 });

@@ -75,14 +75,14 @@ Status: pending
 
 - [x] Validate supported file signatures, extensions, MIME types, UTF-8 encoding, and 25 MiB upload size.
 - [x] Add workspace-scoped artifact listing and metadata APIs.
-- [ ] Add artifact versioning and retention states.
-- [ ] Add artifact deletion only after `agent_runs.source_artifact_id` has an enforced relation and database/object-storage cleanup has a failure-safe lifecycle; deleting now could leave dangling run references or orphaned objects.
+- [x] Add artifact version lineage, retention timestamps, and explicit `ACTIVE`, `DELETING`, and `DELETED` lifecycle states.
+- [x] Add workspace-Admin soft deletion with an enforced run relation, transactional outbox job, retry-safe MinIO/Qdrant cleanup, and stale-job reconciliation while retaining audit metadata.
 - [x] Integrate local UTF-8 and internal Docling extraction for PDF, image, DOCX, PPTX, XLSX, CSV, Markdown, and text.
 - [x] Run OCR for PDF/image inputs and preserve Docling's layout-aware Markdown structure.
 - [ ] Persist granular page, table, image, slide, and sheet location metadata for citation assembly.
 - [ ] Render and select bounded PDF pages for vision inference; current PDF vision is explicitly extraction-text-only.
 - [x] Store canonical extracted content and checksums in MinIO with retry-safe lifecycle metadata.
-- [ ] Reconcile failed database and object-storage operations.
+- [x] Reconcile expired artifact-deletion claims and safely repeat physical object cleanup.
 
 Acceptance gate: supported fixtures produce bounded structured extraction, unsafe files fail closed, and partial failures leave no untracked objects.
 
@@ -98,7 +98,7 @@ Status: in progress
 - [x] Provision the active index and execute indexing and query jobs in the backend worker.
 - [ ] Add optional local reranking.
 - [x] Add deterministic citation assembly.
-- [ ] Add re-indexing, deletion, model-version migration, and index reconciliation.
+- [ ] Add knowledge-source deletion, model-version migration, and full index reconciliation. Artifact cleanup removes vectors for already inactive sources.
 - [ ] Build a small retrieval evaluation dataset from licensed public or synthetic documents.
 
 Acceptance gate: retrieval returns only authorized passages with resolvable citations and can rebuild Qdrant entirely from durable records.

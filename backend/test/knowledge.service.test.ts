@@ -1,6 +1,7 @@
 import {
   ArtifactExtractionStatus,
   ArtifactKind,
+  ArtifactLifecycleStatus,
   DataClassification,
   KnowledgeIndexStatus,
   KnowledgeJobStatus,
@@ -50,6 +51,7 @@ const artifact = {
   kind: ArtifactKind.SOURCE,
   classification: DataClassification.INTERNAL,
   extractionStatus: ArtifactExtractionStatus.COMPLETED,
+  lifecycleStatus: ArtifactLifecycleStatus.ACTIVE,
   filename: "manual.pdf",
   mimeType: "application/pdf",
   detectedMimeType: "application/pdf",

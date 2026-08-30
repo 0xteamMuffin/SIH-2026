@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { ArtifactExtractionStatus, ArtifactKind, DataClassification } from "@prisma/client";
+import { ArtifactExtractionStatus, ArtifactKind, ArtifactLifecycleStatus, DataClassification } from "@prisma/client";
 import multer from "multer";
 import { z } from "zod";
 import { authenticate } from "../../middleware/auth.js";
@@ -7,7 +7,7 @@ import { requireWorkspaceAccess, requireWorkspaceRole } from "../../middleware/w
 import { AppError } from "../../lib/errors.js";
 import { audit } from "../../lib/audit.js";
 import { prisma } from "../../lib/prisma.js";
-import { createArtifact, findArtifact, getArtifact, getArtifactMetadata, listArtifacts } from "./artifacts.service.js";
+import { createArtifact, findArtifact, getArtifact, getArtifactMetadata, listArtifacts, requestArtifactDeletion } from "./artifacts.service.js";
 import { validateSourceArtifact } from "./artifact-validation.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
@@ -34,8 +34,14 @@ const artifactListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
   kind: z.nativeEnum(ArtifactKind).optional(),
   extractionStatus: z.nativeEnum(ArtifactExtractionStatus).optional(),
+  lifecycleStatus: z.nativeEnum(ArtifactLifecycleStatus).optional(),
 });
 const artifactIdParamsSchema = z.object({ artifactId: z.string().uuid() });
+const artifactUploadBodySchema = z.object({
+  classification: z.nativeEnum(DataClassification),
+  previousArtifactId: z.string().uuid().optional(),
+  retentionUntil: z.string().datetime().transform((value) => new Date(value)).optional(),
+});
 
 artifactsRouter.get("/workspaces/:workspaceId/artifacts", authenticate, requireWorkspaceAccess, async (request, response, next) => {
   try {
@@ -57,11 +63,19 @@ artifactsRouter.get("/artifacts/:artifactId", authenticate, async (request, resp
 artifactsRouter.post("/workspaces/:workspaceId/artifacts", authenticate, requireWorkspaceRole("ADMIN", "OPERATOR"), upload.single("file"), async (request, response, next) => {
   try {
     if (!request.file) throw new AppError(400, "A file is required", "INVALID_INPUT");
-    const classification = z.nativeEnum(DataClassification).parse(request.body.classification);
+    const body = artifactUploadBodySchema.parse(request.body);
     const detected = await validateSourceArtifact(request.file.originalname, request.file.buffer);
-    const artifact = await createArtifact({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, filename: request.file.originalname, mimeType: detected.mimeType, detectedMimeType: detected.mimeType, kind: "SOURCE", classification, bytes: request.file.buffer });
-    await audit({ actorId: request.user!.id, workspaceId: artifact.workspaceId, eventType: "ARTIFACT_UPLOADED", metadata: { artifactId: artifact.id, filename: artifact.filename, classification } });
+    const artifact = await createArtifact({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, filename: request.file.originalname, mimeType: detected.mimeType, detectedMimeType: detected.mimeType, kind: "SOURCE", classification: body.classification, bytes: request.file.buffer, previousArtifactId: body.previousArtifactId, retentionUntil: body.retentionUntil });
+    await audit({ actorId: request.user!.id, workspaceId: artifact.workspaceId, eventType: "ARTIFACT_UPLOADED", metadata: { artifactId: artifact.id, filename: artifact.filename, classification: body.classification, previousArtifactId: body.previousArtifactId } });
     response.status(201).json({ artifact });
+  } catch (error) { next(error); }
+});
+
+artifactsRouter.delete("/workspaces/:workspaceId/artifacts/:artifactId", authenticate, requireWorkspaceRole("ADMIN"), async (request, response, next) => {
+  try {
+    const { artifactId } = artifactIdParamsSchema.parse(request.params);
+    const result = await requestArtifactDeletion({ workspaceId: String(request.params.workspaceId), artifactId, requestedBy: request.user!.id });
+    response.status(202).json(result);
   } catch (error) { next(error); }
 });
 
@@ -73,6 +87,7 @@ artifactsRouter.get("/artifacts/:artifactId/download", authenticate, async (requ
       const membership = await prisma.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId: artifact.workspaceId, userId: request.user!.id } } });
       if (!membership) throw new AppError(403, "Artifact access denied", "FORBIDDEN");
     }
+    if (artifact.lifecycleStatus !== ArtifactLifecycleStatus.ACTIVE) throw new AppError(404, "Artifact content is unavailable", "NOT_FOUND");
     const bytes = await getArtifact(artifact.objectKey);
     response.setHeader("content-type", artifact.mimeType);
     response.setHeader("content-disposition", `attachment; filename="${artifact.filename.replace(/\"/g, "")}"`);
