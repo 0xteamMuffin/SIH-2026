@@ -127,6 +127,13 @@ function harness(job = queuedJob()) {
     text: sourceText,
     objectKey: "canonical.md",
     metadata: { sourceSha256: sourceChecksum, extractedSha256: extractionChecksum },
+    sourceBlocks: [{
+      id: "page-1-block-2",
+      startChar: sourceText.indexOf("Close valve"),
+      endChar: sourceText.indexOf("Close valve") + "Close valve V-101 before maintenance.".length,
+      elementType: "paragraph",
+      provenance: { source: "docling", page: 1, bbox: [10, 20, 200, 40], pageNumbers: [1], boundingBoxes: [{ pageNumber: 1, left: 10, top: 20, right: 200, bottom: 40 }] },
+    }],
   });
   const embed = vi.fn().mockImplementation(async (_profile, _classification, texts: readonly string[]) => texts.map(() => [0.1, 0.2]));
   const vectorStore = {
@@ -206,6 +213,7 @@ describe("source indexing job processor", () => {
         char_range: { start: expect.any(Number), end: expect.any(Number) },
         line_range: { start: expect.any(Number), end: expect.any(Number) },
         citation: { char_start: expect.any(Number), char_end: expect.any(Number), line_start: expect.any(Number), line_end: expect.any(Number) },
+        source_blocks: [expect.objectContaining({ id: "page-1-block-2", provenance: expect.objectContaining({ page: 1, bbox: [10, 20, 200, 40], pageNumbers: [1] }) })],
       },
     });
     expect(test.knowledgeSourceIndex.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({

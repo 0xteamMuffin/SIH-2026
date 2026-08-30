@@ -1,4 +1,4 @@
-export type KnowledgeElementType = "heading" | "paragraph" | "list" | "table" | "code" | "quote" | "other";
+export type KnowledgeElementType = "heading" | "paragraph" | "list" | "table" | "picture" | "code" | "quote" | "other";
 
 export type ProvenanceValue =
   | string

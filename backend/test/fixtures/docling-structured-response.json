@@ -1,0 +1,52 @@
+{
+  "document": {
+    "md_content": "# Inspection\n\nPump is operational.\n\n| Tag | State |\n| --- | --- |\n| P-101 | Ready |\n\n<!-- image -->",
+    "text_content": "Inspection\nPump is operational.\nTag State P-101 Ready",
+    "json_content": {
+      "schema_name": "DoclingDocument",
+      "version": "1.0.0",
+      "body": {
+        "children": [
+          { "$ref": "#/texts/0" },
+          { "$ref": "#/texts/1" },
+          { "$ref": "#/tables/0" },
+          { "$ref": "#/pictures/0" }
+        ]
+      },
+      "texts": [
+        {
+          "self_ref": "#/texts/0",
+          "label": "section_header",
+          "text": "Inspection",
+          "prov": [{ "page_no": 1, "bbox": { "l": 10, "t": 20, "r": 200, "b": 40, "coord_origin": "TOPLEFT" } }]
+        },
+        {
+          "self_ref": "#/texts/1",
+          "label": "text",
+          "text": "Pump is operational.",
+          "prov": [{ "page_no": 1, "bbox": { "l": 10, "t": 50, "r": 300, "b": 80, "coord_origin": "TOPLEFT" } }]
+        }
+      ],
+      "tables": [
+        {
+          "self_ref": "#/tables/0",
+          "label": "table",
+          "prov": [{ "page_no": 2, "bbox": { "l": 15, "t": 30, "r": 400, "b": 180, "coord_origin": "TOPLEFT" } }],
+          "data": { "table_cells": [{ "text": "Tag" }, { "text": "State" }, { "text": "P-101" }, { "text": "Ready" }] }
+        }
+      ],
+      "pictures": [
+        {
+          "self_ref": "#/pictures/0",
+          "label": "picture",
+          "prov": [{ "page_no": 2, "bbox": { "l": 20, "t": 200, "r": 350, "b": 420, "coord_origin": "TOPLEFT" } }]
+        }
+      ],
+      "groups": []
+    }
+  },
+  "status": "success",
+  "processing_time": 1.25,
+  "timings": {},
+  "errors": []
+}

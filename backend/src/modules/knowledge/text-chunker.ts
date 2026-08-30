@@ -19,7 +19,7 @@ const HARD_MAX_CHARS = 2_400;
 const HARD_MAX_OVERLAP_CHARS = 240;
 const HARD_MAX_CHUNKS = 100_000;
 const UUID_NAMESPACE = Buffer.from("6ba7b8109dad11d180b400c04fd430c8", "hex");
-const ELEMENT_TYPES = new Set<KnowledgeElementType>(["heading", "paragraph", "list", "table", "code", "quote", "other"]);
+const ELEMENT_TYPES = new Set<KnowledgeElementType>(["heading", "paragraph", "list", "table", "picture", "code", "quote", "other"]);
 
 interface Line {
   start: number;

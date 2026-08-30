@@ -104,6 +104,7 @@ export async function processArtifactDeletionJob(jobId: string, overrides: Proce
       }
     }
     if (artifact.extractedObjectKey) await input.deleteObject(artifact.extractedObjectKey);
+    if (artifact.extractionProvenanceObjectKey) await input.deleteObject(artifact.extractionProvenanceObjectKey);
     await input.deleteObject(artifact.objectKey);
 
     const completedAt = input.now();

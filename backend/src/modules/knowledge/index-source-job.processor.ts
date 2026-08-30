@@ -563,7 +563,7 @@ export async function processIndexSourceJob(jobId: string, overrides: ProcessorD
       throw new PermanentIndexingError("KNOWLEDGE_EXTRACTION_CHECKSUM_MISMATCH", "Canonical extraction checksums do not match the source artifact");
     }
 
-    const chunks = input.chunk({ text: extraction.text, sourceId: source.id });
+    const chunks = input.chunk({ text: extraction.text, sourceId: source.id, sourceBlocks: extraction.sourceBlocks });
     if (chunks.length === 0) {
       throw new PermanentIndexingError("KNOWLEDGE_SOURCE_EMPTY", "Canonical extraction contains no indexable text");
     }

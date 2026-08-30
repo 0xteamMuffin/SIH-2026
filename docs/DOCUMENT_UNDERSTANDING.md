@@ -6,7 +6,11 @@ Document understanding uses complementary extraction and vision paths. Neither p
 
 - UTF-8 text, Markdown, and CSV are decoded locally.
 - Docling extracts reusable text, layout, tables, and OCR from PDF, image, DOCX, PPTX, and XLSX inputs.
-- Extracted content, checksums, status, timing, and errors are persisted for retrieval and auditing.
+- Canonical Markdown/text and a separate versioned JSON provenance sidecar are persisted in MinIO. PostgreSQL records the sidecar object key, schema version, and SHA-256 checksum; the sidecar also binds itself to the source and canonical-text checksums.
+- Docling JSON is required and validated before normalization. Bounded blocks carry canonical character ranges plus page and bounding-box locations, with table, picture, and heading identity where applicable.
+- Locally decoded UTF-8 text, Markdown, and CSV receive one-based line and zero-based half-open character provenance. Very high line counts are deterministically coalesced to the sidecar block limit.
+- Knowledge ingestion validates and loads the sidecar, then passes its structured blocks to the existing chunker so vector citation payloads retain intersecting source locations.
+- Extraction status, timing, and errors remain persisted for retrieval and auditing.
 - Worker startup and unrelated tasks do not depend on Docling availability.
 
 ## Vision interpretation
@@ -27,6 +31,8 @@ Document understanding uses complementary extraction and vision paths. Neither p
 5. Send bounded in-memory images to eligible vision models, while keeping image data and provider-request base64 out of durable messages, tool outputs, logs, and invocation telemetry.
 6. Combine deterministic extraction evidence and clearly-labelled model observations.
 7. Persist non-payload visual-input descriptors and model invocation metadata.
+
+The structured extraction sidecar describes deterministic source locations only. It does not contain vision-model observations, rendered page images, or provider request payloads, preserving the separation between optional Docling extraction and task-routed vision analysis.
 
 This keeps OCR/layout processing replaceable while allowing stronger vision models to improve interpretation without coupling the backend to one parser or model vendor.
 

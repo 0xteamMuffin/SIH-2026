@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ArtifactExtractionStatus, ArtifactKind } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -21,6 +22,10 @@ const pendingTextArtifact = {
   extractionStatus: ArtifactExtractionStatus.PENDING,
   extractionStartedAt: null,
   extractedObjectKey: null,
+  extractionProvenanceObjectKey: null,
+  extractionProvenanceSha256: null,
+  extractionProvenanceSchemaVersion: null,
+  sha256: null,
   extractionMetadata: null,
   lifecycleStatus: "ACTIVE",
   objectKey: "workspace-1/source.txt",
@@ -41,11 +46,25 @@ describe("artifact extraction lifecycle", () => {
     const result = await extractArtifact("artifact-1");
 
     expect(result.text).toContain("P-101,Operational");
+    expect(result.sourceBlocks).toEqual([
+      expect.objectContaining({ startChar: 0, provenance: expect.objectContaining({ source: "local-utf8", lineStart: 1, lineEnd: 1, charStart: 0 }) }),
+      expect.objectContaining({ provenance: expect.objectContaining({ source: "local-utf8", lineStart: 2, lineEnd: 2 }) }),
+    ]);
     expect(doclingMock).not.toHaveBeenCalled();
     expect(putArtifactMock).toHaveBeenCalledWith(expect.stringMatching(/^workspace-1\/extractions\/artifact-1\/[a-f0-9]{64}\.txt$/), expect.any(Buffer), "text/plain; charset=utf-8");
+    const provenanceWrite = putArtifactMock.mock.calls.find(([, , mimeType]) => mimeType === "application/json; charset=utf-8");
+    expect(provenanceWrite?.[0]).toMatch(/\.provenance\.v1\.json$/);
+    expect(JSON.parse(provenanceWrite?.[1].toString("utf8"))).toMatchObject({ schema: "extraction-provenance", schemaVersion: 1, blocks: expect.any(Array) });
     expect(artifactMock.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
       where: expect.objectContaining({ extractionStatus: ArtifactExtractionStatus.PROCESSING, extractionStartedAt: expect.any(Date) }),
-      data: expect.objectContaining({ extractionStatus: ArtifactExtractionStatus.COMPLETED, extractionStartedAt: null, extractionError: null }),
+      data: expect.objectContaining({
+        extractionStatus: ArtifactExtractionStatus.COMPLETED,
+        extractionProvenanceObjectKey: expect.stringMatching(/\.provenance\.v1\.json$/),
+        extractionProvenanceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        extractionProvenanceSchemaVersion: 1,
+        extractionStartedAt: null,
+        extractionError: null,
+      }),
     }));
   });
 
@@ -57,6 +76,33 @@ describe("artifact extraction lifecycle", () => {
 
     expect(artifactMock.updateMany).not.toHaveBeenCalled();
     expect(putArtifactMock).not.toHaveBeenCalled();
+  });
+
+  it("validates and reuses a completed provenance sidecar", async () => {
+    const text = "First line\nSecond line\n";
+    const sourceSha256 = "a".repeat(64);
+    const sidecar = {
+      schema: "extraction-provenance",
+      schemaVersion: 1,
+      sourceSha256,
+      canonicalTextSha256: createHash("sha256").update(text).digest("hex"),
+      blocks: [{ id: "lines-1-1", startChar: 0, endChar: 11, provenance: { source: "local-utf8", lineStart: 1, lineEnd: 1, charStart: 0, charEnd: 11 } }],
+    };
+    const sidecarBytes = Buffer.from(JSON.stringify(sidecar));
+    const provenanceSha256 = createHash("sha256").update(sidecarBytes).digest("hex");
+    artifactMock.findFirst.mockResolvedValue({
+      ...pendingTextArtifact,
+      extractionStatus: ArtifactExtractionStatus.COMPLETED,
+      extractedObjectKey: "workspace-1/extractions/artifact-1/hash.txt",
+      extractionProvenanceObjectKey: "workspace-1/extractions/artifact-1/hash.provenance.v1.json",
+      extractionProvenanceSha256: provenanceSha256,
+      extractionProvenanceSchemaVersion: 1,
+      sha256: sourceSha256,
+      extractionMetadata: { sourceSha256 },
+    });
+    getArtifactMock.mockResolvedValueOnce(Buffer.from(text)).mockResolvedValueOnce(sidecarBytes);
+
+    await expect(extractArtifact("artifact-1")).resolves.toMatchObject({ sourceBlocks: [{ id: "lines-1-1", startChar: 0, endChar: 11 }] });
   });
 
   it("allows an expired PROCESSING claim to be recovered", async () => {

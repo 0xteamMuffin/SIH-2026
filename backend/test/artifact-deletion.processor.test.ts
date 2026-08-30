@@ -23,6 +23,7 @@ function fixture(status = ArtifactDeletionJobStatus.QUEUED) {
           lifecycleStatus: ArtifactLifecycleStatus.DELETING,
           objectKey: "workspace/source.pdf",
           extractedObjectKey: "workspace/extractions/source.md",
+          extractionProvenanceObjectKey: "workspace/extractions/source.provenance.v1.json",
           knowledgeSource: {
             id: sourceId,
             status: KnowledgeSourceStatus.ARCHIVED,
@@ -64,7 +65,7 @@ describe("artifact deletion processor", () => {
 
     expect(vectorStore.deleteByKnowledgeSourceId).toHaveBeenCalledTimes(2);
     expect(vectorStore.deleteByKnowledgeSourceId).toHaveBeenCalledWith({ collectionName: "knowledge_a", knowledgeSourceId: sourceId });
-    expect(deleteObject.mock.calls.map(([key]) => key)).toEqual(["workspace/extractions/source.md", "workspace/source.pdf"]);
+    expect(deleteObject.mock.calls.map(([key]) => key)).toEqual(["workspace/extractions/source.md", "workspace/extractions/source.provenance.v1.json", "workspace/source.pdf"]);
     expect(models.artifact.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ lifecycleStatus: ArtifactLifecycleStatus.DELETED }) }));
     expect(models.artifactDeletionJob.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: ArtifactDeletionJobStatus.SUCCEEDED }) }));
     expect(models.auditEvent.create).toHaveBeenCalledOnce();
