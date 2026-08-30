@@ -1,0 +1,15 @@
+process.env.NODE_ENV = "test";
+process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/test";
+process.env.JWT_SECRET = "test-secret-with-at-least-thirty-two-characters";
+process.env.SEED_ADMIN_EMAIL = "admin@test.local";
+process.env.SEED_ADMIN_PASSWORD = "test-password-123";
+process.env.S3_ENDPOINT = "http://localhost:9000";
+process.env.S3_REGION = "us-east-1";
+process.env.S3_ACCESS_KEY = "test";
+process.env.S3_SECRET_KEY = "test-secret";
+process.env.MINIO_BUCKET = "test-artifacts";
+process.env.QDRANT_URL = "http://localhost:6333";
+process.env.SANDBOX_RUNNER_URL = "http://localhost:4100";
+process.env.APP_MODE = "development";
+process.env.MODEL_PROVIDER = "openrouter";
+process.env.OPENROUTER_MODEL = "test/model";

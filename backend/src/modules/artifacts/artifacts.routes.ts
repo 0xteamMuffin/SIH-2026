@@ -9,9 +9,8 @@ import { createArtifact, findArtifact, getArtifact } from "./artifacts.service.j
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
 export const artifactsRouter = Router();
-artifactsRouter.use(authenticate);
 
-artifactsRouter.post("/workspaces/:workspaceId/artifacts", requireWorkspaceAccess, upload.single("file"), async (request, response, next) => {
+artifactsRouter.post("/workspaces/:workspaceId/artifacts", authenticate, requireWorkspaceAccess, upload.single("file"), async (request, response, next) => {
   try {
     if (!request.file) throw new AppError(400, "A file is required", "INVALID_INPUT");
     const artifact = await createArtifact({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, filename: request.file.originalname, mimeType: request.file.mimetype || "application/octet-stream", kind: "SOURCE", bytes: request.file.buffer });
@@ -20,9 +19,9 @@ artifactsRouter.post("/workspaces/:workspaceId/artifacts", requireWorkspaceAcces
   } catch (error) { next(error); }
 });
 
-artifactsRouter.get("/artifacts/:artifactId/download", async (request, response, next) => {
+artifactsRouter.get("/artifacts/:artifactId/download", authenticate, async (request, response, next) => {
   try {
-    const artifact = await findArtifact(request.params.artifactId!);
+    const artifact = await findArtifact(String(request.params.artifactId));
     if (!artifact) throw new AppError(404, "Artifact not found", "NOT_FOUND");
     if (request.user!.role !== "ADMIN") {
       const membership = await prisma.workspaceMember.findUnique({ where: { workspaceId_userId: { workspaceId: artifact.workspaceId, userId: request.user!.id } } });
