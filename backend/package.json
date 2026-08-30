@@ -15,6 +15,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.735.0",
     "@prisma/client": "^6.5.0",
+    "amqplib": "^2.0.1",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "docx": "^9.5.1",
@@ -27,6 +28,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@types/amqplib": "^0.10.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.1",

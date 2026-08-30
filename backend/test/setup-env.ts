@@ -10,6 +10,7 @@ process.env.S3_SECRET_KEY = "test-secret";
 process.env.MINIO_BUCKET = "test-artifacts";
 process.env.QDRANT_URL = "http://localhost:6333";
 process.env.SANDBOX_RUNNER_URL = "http://localhost:4100";
+process.env.AMQP_URL = "amqp://test:test@localhost:5672";
 process.env.APP_MODE = "development";
 process.env.MODEL_CONFIG_PATH = "config/models.json";
 process.env.ALLOW_REMOTE_INFERENCE = "true";

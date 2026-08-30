@@ -14,6 +14,7 @@ x-backend-env: &backend-env
   MINIO_BUCKET: ${MINIO_BUCKET}
   QDRANT_URL: ${QDRANT_URL}
   SANDBOX_RUNNER_URL: http://sandbox-runner:4100
+  AMQP_URL: ${AMQP_URL}
   APP_MODE: ${APP_MODE}
   MODEL_CONFIG_PATH: /app/config/models.json
   ALLOW_REMOTE_INFERENCE: ${ALLOW_REMOTE_INFERENCE:-false}
@@ -63,6 +64,19 @@ services:
     volumes: [qdrant_data:/qdrant/storage]
     networks: [internal]
 
+  rabbitmq:
+    image: rabbitmq:4.1-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    volumes: [rabbitmq_data:/var/lib/rabbitmq]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [internal]
+
   sandbox-runner:
     build: ./backend/sandbox-runner
     environment:
@@ -82,6 +96,7 @@ services:
       postgres: { condition: service_healthy }
       minio-init: { condition: service_completed_successfully }
       qdrant: { condition: service_started }
+      rabbitmq: { condition: service_healthy }
       sandbox-runner: { condition: service_started }
     environment: *backend-env
     extra_hosts: ["host.docker.internal:host-gateway"]
@@ -110,4 +125,5 @@ volumes:
   postgres_data:
   minio_data:
   qdrant_data:
+  rabbitmq_data:
   sandbox_workspaces:
