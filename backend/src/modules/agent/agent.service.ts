@@ -31,6 +31,24 @@ const EXTRACTION_VERSION = "canonical-v1";
 const DIRECT_VISION_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 const CREATE_ADMISSION_LOCK_ID = 1_397_311_489;
 const EXECUTION_ADMISSION_LOCK_ID = 1_397_311_490;
+const runSummarySelect = {
+  id: true,
+  workspaceId: true,
+  requestedBy: true,
+  task: true,
+  taskCapability: true,
+  modelProfile: true,
+  modelReason: true,
+  sourceArtifactId: true,
+  dataClassification: true,
+  status: true,
+  result: true,
+  startedAt: true,
+  completedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.AgentRunSelect;
+export type RunCursor = { createdAt: Date; id: string };
 const toJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 const configuredTokenBudget = (): ModelTokenBudget => ({
   maxInputTokens: env.AGENT_MAX_INPUT_TOKENS,
@@ -489,6 +507,30 @@ export async function failRun(runId: string, error: unknown) {
 }
 export async function getRun(runId: string, actor: Pick<AuthUser, "id" | "role">) {
   return prisma.agentRun.findFirst({ where: accessibleRunWhere(runId, actor), include: { messages: { orderBy: { createdAt: "asc" } }, toolCalls: { orderBy: { startedAt: "asc" } }, approvals: { orderBy: { requestedAt: "asc" } }, modelInvocations: { orderBy: { attempt: "asc" } }, evidence: { orderBy: { createdAt: "asc" } } } });
+}
+export async function listRuns(input: { workspaceId: string; limit: number; cursor?: RunCursor }) {
+  const runs = await prisma.agentRun.findMany({
+    where: {
+      workspaceId: input.workspaceId,
+      ...(input.cursor ? {
+        OR: [
+          { createdAt: { lt: input.cursor.createdAt } },
+          { createdAt: input.cursor.createdAt, id: { lt: input.cursor.id } },
+        ],
+      } : {}),
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: input.limit + 1,
+    select: runSummarySelect,
+  });
+  const page = runs.slice(0, input.limit);
+  const last = page[page.length - 1];
+  return {
+    runs: page,
+    nextCursor: runs.length > input.limit && last
+      ? Buffer.from(JSON.stringify({ createdAt: last.createdAt.toISOString(), id: last.id })).toString("base64url")
+      : null,
+  };
 }
 export async function cancelRun(runId: string, actor: Pick<AuthUser, "id" | "role">) {
   const run = await prisma.agentRun.findFirst({ where: mutableRunWhere(runId, actor) });

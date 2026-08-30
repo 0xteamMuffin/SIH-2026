@@ -9,6 +9,7 @@ const { approvalNoteMock, artifactMock, auditMock, agentRunMock, evidenceMock, e
   agentRunMock: {
     count: vi.fn(),
     create: vi.fn(),
+    findMany: vi.fn(),
     findFirst: vi.fn(),
     findUnique: vi.fn(),
     findUniqueOrThrow: vi.fn(),
@@ -43,7 +44,7 @@ vi.mock("../src/modules/agent/approval-note.js", () => ({ approvalNoteDocx: appr
 vi.mock("../src/modules/deliverables/pptx-generator.js", () => ({ generatePptx: generatePptxMock, PPTX_MIME_TYPE: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }));
 vi.mock("../src/modules/deliverables/xlsx-generator.js", () => ({ generateXlsx: generateXlsxMock, XLSX_MIME_TYPE: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
 
-import { cancelRun, createRun, executeRunTool, failRun, getRun, processRun } from "../src/modules/agent/agent.service.js";
+import { cancelRun, createRun, executeRunTool, failRun, getRun, listRuns, processRun } from "../src/modules/agent/agent.service.js";
 
 describe("agent run access", () => {
   beforeEach(() => {
@@ -497,6 +498,37 @@ describe("agent run access", () => {
     await getRun("run-1", { id: "admin-1", role: "ADMIN" });
 
     expect(agentRunMock.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "run-1" } }));
+  });
+
+  it("lists only a workspace-scoped run page with a stable cursor", async () => {
+    const first = { id: "10000000-0000-4000-8000-000000000002", createdAt: new Date("2026-08-30T12:00:00.000Z") };
+    const second = { id: "10000000-0000-4000-8000-000000000001", createdAt: new Date("2026-08-30T11:00:00.000Z") };
+    agentRunMock.findMany.mockResolvedValue([first, second]);
+
+    const result = await listRuns({ workspaceId: "workspace-1", limit: 1 });
+
+    expect(agentRunMock.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { workspaceId: "workspace-1" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 2,
+      select: expect.objectContaining({ id: true, result: true, createdAt: true }),
+    }));
+    expect(result.runs).toEqual([first]);
+    expect(JSON.parse(Buffer.from(result.nextCursor!, "base64url").toString("utf8"))).toEqual({ createdAt: first.createdAt.toISOString(), id: first.id });
+  });
+
+  it("applies a composite keyset cursor within the requested workspace", async () => {
+    agentRunMock.findMany.mockResolvedValue([]);
+    const cursor = { createdAt: new Date("2026-08-30T12:00:00.000Z"), id: "10000000-0000-4000-8000-000000000001" };
+
+    await listRuns({ workspaceId: "workspace-2", limit: 25, cursor });
+
+    expect(agentRunMock.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        workspaceId: "workspace-2",
+        OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }],
+      },
+    }));
   });
 
   it("does not reveal inaccessible runs during cancellation", async () => {

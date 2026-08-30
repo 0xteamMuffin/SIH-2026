@@ -559,11 +559,29 @@ export const openApiDocument = {
       },
     },
     "/api/workspaces/{workspaceId}/runs": {
+      parameters: [parameterRef("WorkspaceId")],
+      get: {
+        operationId: "listRuns",
+        summary: "List workspace agent runs",
+        tags: ["Runs"],
+        parameters: [parameterRef("Cursor"), parameterRef("Limit")],
+        responses: {
+          "200": jsonResponse("A page of workspace agent runs.", {
+            type: "object",
+            additionalProperties: false,
+            required: ["runs", "pagination"],
+            properties: {
+              runs: { type: "array", items: ref("AgentRunSummary") },
+              pagination: ref("Pagination"),
+            },
+          }),
+          ...securedErrors,
+        },
+      },
       post: {
         operationId: "createRun",
         summary: "Queue an agent run",
         tags: ["Runs"],
-        parameters: [parameterRef("WorkspaceId")],
         requestBody: {
           required: true,
           content: {
@@ -1168,6 +1186,28 @@ export const openApiDocument = {
           approvals: { type: "array", items: ref("ToolApproval") },
           modelInvocations: { type: "array", items: ref("ModelInvocation") },
           evidence: { type: "array", items: ref("Evidence") },
+        },
+      },
+      AgentRunSummary: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "workspaceId", "requestedBy", "task", "taskCapability", "modelProfile", "modelReason", "sourceArtifactId", "dataClassification", "status", "result", "startedAt", "completedAt", "createdAt", "updatedAt"],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          workspaceId: { type: "string", format: "uuid" },
+          requestedBy: { type: "string", format: "uuid" },
+          task: { type: "string" },
+          taskCapability: { type: "string" },
+          modelProfile: { type: "string" },
+          modelReason: { type: "string" },
+          sourceArtifactId: { type: ["string", "null"], format: "uuid" },
+          dataClassification: ref("DataClassification"),
+          status: ref("RunStatus"),
+          result: {},
+          startedAt: { type: ["string", "null"], format: "date-time" },
+          completedAt: { type: ["string", "null"], format: "date-time" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
         },
       },
       RunMessage: {

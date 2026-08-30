@@ -83,4 +83,20 @@ describe("OpenAPI contract", () => {
       },
     });
   });
+
+  it("documents the paginated workspace run listing", () => {
+    const listRuns = openApiDocument.paths["/api/workspaces/{workspaceId}/runs"].get;
+
+    expect(listRuns.parameters).toEqual([
+      { $ref: "#/components/parameters/Cursor" },
+      { $ref: "#/components/parameters/Limit" },
+    ]);
+    expect(listRuns.responses["200"].content["application/json"].schema).toMatchObject({
+      required: ["runs", "pagination"],
+      properties: {
+        runs: { items: { $ref: "#/components/schemas/AgentRunSummary" } },
+        pagination: { $ref: "#/components/schemas/Pagination" },
+      },
+    });
+  });
 });
