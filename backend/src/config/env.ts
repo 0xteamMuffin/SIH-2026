@@ -6,9 +6,29 @@ const booleanString = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
+const corsAllowedOrigins = z.string().default("http://localhost:3000").transform((value, ctx) => {
+  const origins = value.split(",").map((origin) => origin.trim()).filter(Boolean);
+  for (const origin of origins) {
+    try {
+      const url = new URL(origin);
+      if (!["http:", "https:"].includes(url.protocol) || url.origin !== origin) throw new Error();
+    } catch {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Invalid CORS origin: ${origin}` });
+    }
+  }
+  return origins;
+});
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   API_PORT: z.coerce.number().int().positive().default(4000),
+  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
+  CORS_ALLOWED_ORIGINS: corsAllowedOrigins,
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
+  API_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(60_000),
+  API_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(100_000).default(1_000),
+  LOGIN_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(900_000),
+  LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(1_000).default(10),
   DATABASE_URL: z.string().min(1),
   JWT_SECRET: z.string().min(32),
   SEED_ADMIN_EMAIL: z.string().email(),

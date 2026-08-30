@@ -1,4 +1,11 @@
 process.env.NODE_ENV = "test";
+process.env.LOG_LEVEL = "silent";
+process.env.CORS_ALLOWED_ORIGINS = "http://localhost:3000,https://app.test.local";
+process.env.TRUST_PROXY_HOPS = "0";
+process.env.API_RATE_LIMIT_WINDOW_MS = "60000";
+process.env.API_RATE_LIMIT_MAX = "3";
+process.env.LOGIN_RATE_LIMIT_WINDOW_MS = "60000";
+process.env.LOGIN_RATE_LIMIT_MAX = "2";
 process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/test";
 process.env.JWT_SECRET = "test-secret-with-at-least-thirty-two-characters";
 process.env.SEED_ADMIN_EMAIL = "admin@test.local";

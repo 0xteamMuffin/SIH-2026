@@ -16,6 +16,9 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
   if (error instanceof AppError) appError = error;
   else if (error instanceof ZodError) appError = new AppError(400, "Request validation failed", "INVALID_INPUT");
   else if (error instanceof SyntaxError && "status" in error && error.status === 400) appError = new AppError(400, "Malformed JSON request", "INVALID_JSON");
-  else appError = new AppError(500, "Internal server error", "INTERNAL_ERROR");
+  else {
+    response.err = error instanceof Error ? error : new Error("Unknown request error");
+    appError = new AppError(500, "Internal server error", "INTERNAL_ERROR");
+  }
   response.status(appError.status).json({ error: { code: appError.code, message: appError.message } });
 }
