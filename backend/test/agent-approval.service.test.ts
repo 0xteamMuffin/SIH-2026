@@ -79,6 +79,7 @@ describe("agent tool approvals", () => {
     } });
     expect(approvalMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: approval.id, status: ApprovalStatus.PENDING }) }));
     expect(outboxMock.create).toHaveBeenCalledWith({ data: { topic: "agent.run.resumed", aggregateId: approval.runId, payload: { runId: approval.runId } } });
+    expect(agentRunMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "PENDING" } }));
   });
 
   it("denies non-global administrators without a matching workspace membership", async () => {

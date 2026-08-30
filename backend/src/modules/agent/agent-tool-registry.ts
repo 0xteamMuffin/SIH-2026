@@ -6,6 +6,8 @@ const artifactReadInput = z.object({
   extractionVersion: z.string().min(1).max(64),
 }).strict();
 
+const knowledgeSearchInput = z.object({ query: z.string().trim().min(1).max(20_000) }).strict();
+
 const approvalNoteInput = z.object({ format: z.literal("docx") }).strict();
 const presentationInput = z.object({ format: z.literal("pptx"), evidenceIds: z.array(z.string().uuid()).min(1).max(60) }).strict();
 const spreadsheetInput = z.object({ format: z.literal("xlsx"), evidenceIds: z.array(z.string().uuid()).min(1).max(200) }).strict();
@@ -31,6 +33,19 @@ const artifactReadOutput = z.union([toolFailure, z.object({
   summary: z.string(),
   data: z.object({ characters: z.number().int().nonnegative(), text: z.string() }).passthrough(),
 }).passthrough()]);
+const knowledgeSearchOutput = z.union([toolFailure, z.object({
+  ok: z.literal(true),
+  summary: z.string(),
+  data: z.object({
+    citations: z.array(z.object({
+      artifactId: z.string().uuid(),
+      title: z.string().min(1).max(500),
+      text: z.string().min(1).max(2_000),
+      sourceRef: z.string().min(1).max(1_000),
+      score: z.number().finite(),
+    }).strict()).max(8),
+  }).strict(),
+}).strict()]);
 const approvalNoteOutput = z.union([toolFailure, z.object({
   ok: z.literal(true),
   summary: z.string(),
@@ -49,6 +64,7 @@ const sandboxExecuteOutput = z.union([toolFailure, z.object({
 
 export const agentToolRegistry = {
   "artifact.read": { input: artifactReadInput, output: artifactReadOutput, risk: ToolRiskLevel.LOW, requiresApproval: false },
+  "knowledge.search": { input: knowledgeSearchInput, output: knowledgeSearchOutput, risk: ToolRiskLevel.LOW, requiresApproval: false },
   "deliverable.createApprovalNote": { input: approvalNoteInput, output: approvalNoteOutput, risk: ToolRiskLevel.MEDIUM, requiresApproval: false },
   "deliverable.createPresentation": { input: presentationInput, output: artifactOutput, risk: ToolRiskLevel.MEDIUM, requiresApproval: false },
   "deliverable.createSpreadsheet": { input: spreadsheetInput, output: artifactOutput, risk: ToolRiskLevel.MEDIUM, requiresApproval: false },

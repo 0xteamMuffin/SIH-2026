@@ -2,18 +2,27 @@ import { z } from "zod";
 import { AppError } from "../../lib/errors.js";
 
 export const runtimePhaseSchema = z.enum(["SOURCE", "ANALYZE", "ACTION", "FINALIZE"]);
+const tokenBudgetSchema = z.object({
+  maxInputTokens: z.number().int().positive(),
+  maxOutputTokens: z.number().int().positive(),
+  maxTotalTokens: z.number().int().positive(),
+}).strict();
 const runtimeStateSchema = z.object({
   version: z.literal(1),
   phase: runtimePhaseSchema,
   turn: z.number().int().nonnegative(),
   phaseStarted: z.boolean(),
+  tokenBudget: tokenBudgetSchema.optional(),
 }).strict();
 
-export type AgentRuntimeState = z.infer<typeof runtimeStateSchema>;
+export type ModelTokenBudget = z.infer<typeof tokenBudgetSchema>;
+export type AgentRuntimeState = Omit<z.infer<typeof runtimeStateSchema>, "tokenBudget"> & { tokenBudget: ModelTokenBudget };
 
-export function runtimeState(value: unknown): AgentRuntimeState {
+export function runtimeState(value: unknown, tokenBudget: ModelTokenBudget): AgentRuntimeState {
   const parsed = runtimeStateSchema.safeParse(value);
-  return parsed.success ? parsed.data : { version: 1, phase: "SOURCE", turn: 0, phaseStarted: false };
+  return parsed.success
+    ? { ...parsed.data, tokenBudget: parsed.data.tokenBudget ?? tokenBudget }
+    : { version: 1, phase: "SOURCE", turn: 0, phaseStarted: false, tokenBudget };
 }
 
 export function beginTurn(state: AgentRuntimeState, maxTurns: number, deadlineAt: Date, now = new Date()) {

@@ -52,7 +52,7 @@ Status: in progress
 - [ ] Add bounded retries, backoff, timeouts, progress events, and failure reasons.
 - [x] Implement real cancellation using worker and tool abort signals.
 - [x] Recover or fail stale runs after worker restarts.
-- [ ] Enforce global, workspace, and user concurrency limits.
+- [x] Enforce global, workspace, and user concurrency limits.
 
 Acceptance gate: queued work survives API restarts, cancellation stops active processing, and duplicate delivery cannot duplicate tool side effects.
 
@@ -98,7 +98,8 @@ Status: in progress
 - [x] Provision the active index and execute indexing and query jobs in the backend worker.
 - [ ] Add optional local reranking.
 - [x] Add deterministic citation assembly.
-- [ ] Add knowledge-source deletion, model-version migration, and full index reconciliation. Artifact cleanup removes vectors for already inactive sources.
+- [x] Add knowledge-source deletion, an explicit active-index rebuild, and periodic index reconciliation. Artifact cleanup removes vectors for already inactive sources.
+- [ ] Add zero-downtime model-version migration with replacement-index backfill before activation.
 - [ ] Build a small retrieval evaluation dataset from licensed public or synthetic documents.
 
 Acceptance gate: retrieval returns only authorized passages with resolvable citations and can rebuild Qdrant entirely from durable records.
@@ -109,7 +110,7 @@ Status: in progress
 
 - [x] Replace the fixed workflow with a persisted bounded phase loop.
 - [x] Register typed tools with validated inputs, risk policy, and idempotency keys.
-- [ ] Enforce maximum turns, tool calls, token budgets, and execution deadlines. Turns, tool calls, and deadlines are enforced; token budgets remain model-profile scoped.
+- [x] Enforce maximum turns, tool calls, per-run token budgets, and execution deadlines.
 - [x] Require human approval before code execution and future high-risk actions.
 - [x] Resume paused runs after approval without replaying completed tool side effects.
 - [x] Separate sourced evidence from model-generated output.
@@ -175,7 +176,6 @@ Acceptance gate: a clean machine can install and run the documented demonstratio
 ## Immediate commit sequence
 
 1. Add bounded execution progress events and failure details.
-2. Enforce global, workspace, and user concurrency limits.
-3. Add provider capability and availability checks without document content.
+2. Add provider capability and availability checks without document content.
 
 The sequence may be adjusted only when a discovered dependency or security defect must be resolved first.

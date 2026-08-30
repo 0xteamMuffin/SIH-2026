@@ -22,12 +22,22 @@ import { generatePptx, PPTX_MIME_TYPE } from "../deliverables/pptx-generator.js"
 import { generateXlsx, XLSX_MIME_TYPE } from "../deliverables/xlsx-generator.js";
 import type { AuthUser } from "../../middleware/auth.js";
 import { isAgentToolName, registeredTool, toolRequiresApproval, validateToolInput, validateToolOutput, type AgentToolName } from "./agent-tool-registry.js";
-import { beginTurn, nextPhase, progressEvent, runtimeState, type AgentRuntimeState } from "./agent-runtime.js";
+import { beginTurn, nextPhase, progressEvent, runtimeState, type AgentRuntimeState, type ModelTokenBudget } from "./agent-runtime.js";
 import { pauseForToolApproval, RunWaitingForApproval } from "./agent-approval.service.js";
+import { searchAgentKnowledge, type KnowledgeSearchCitation } from "./agent-knowledge-search.js";
 
 const MAX_SOURCE_CHARS = 12_000;
 const EXTRACTION_VERSION = "canonical-v1";
+const CREATE_ADMISSION_LOCK_ID = 1_397_311_489;
+const EXECUTION_ADMISSION_LOCK_ID = 1_397_311_490;
 const toJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+const configuredTokenBudget = (): ModelTokenBudget => ({
+  maxInputTokens: env.AGENT_MAX_INPUT_TOKENS,
+  maxOutputTokens: env.AGENT_MAX_OUTPUT_TOKENS,
+  maxTotalTokens: env.AGENT_MAX_TOTAL_TOKENS,
+});
+const isTerminalModelError = (error: unknown): error is AppError => error instanceof AppError
+  && ["RUN_TOKEN_BUDGET_EXCEEDED", "RUN_TOKEN_USAGE_UNAVAILABLE"].includes(error.code);
 async function appendMessage(runId: string, turn: number, role: string, content: object) { await prisma.runMessage.create({ data: { runId, turn, role, content: toJson(content) } }); }
 type ToolExecutionOptions = { workspaceId: string; leaseId: string; maxToolCalls: number };
 export async function executeRunTool(runId: string, name: string, input: object, work: (persistedInput: object) => Promise<ToolResult>, signal?: AbortSignal, options?: ToolExecutionOptions) {
@@ -82,7 +92,7 @@ export async function executeRunTool(runId: string, name: string, input: object,
   } catch (error) {
     const result: ToolResult = { ok: false, summary: error instanceof Error ? error.message : "Tool failed", errorCode: "TOOL_FAILED" };
     await prisma.runToolCall.updateMany({ where: { runId, modelToolCallId, status: RunToolCallStatus.RUNNING }, data: { status: RunToolCallStatus.FAILED, output: toJson(result), completedAt: new Date() } });
-    if (signal?.aborted) throw error;
+    if (signal?.aborted || isTerminalModelError(error)) throw error;
     return result;
   }
 }
@@ -114,6 +124,9 @@ async function saveEvidence(runId: string, kind: EvidenceKind, artifactId: strin
   const item = existing ?? await prisma.evidence.create({ data: { runId, kind, artifactId, sourceRef, title, summary, facts: toJson(facts) } });
   return { id: item.id, sourceRef, title, summary, facts };
 }
+function knowledgePrompt(citations: KnowledgeSearchCitation[]) {
+  return citations.map((citation, index) => `[K${index + 1}] ${citation.title}\nSource: ${citation.sourceRef}\n${citation.text}`).join("\n\n");
+}
 function accessibleRunWhere(runId: string, actor: Pick<AuthUser, "id" | "role">): Prisma.AgentRunWhereInput {
   return actor.role === "ADMIN"
     ? { id: runId }
@@ -143,15 +156,21 @@ export async function createRun(input: { workspaceId: string; userId: string; ta
     throw error;
   }
   const runId = crypto.randomUUID();
+  const tokenBudget = configuredTokenBudget();
   const run = await prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw`SELECT pg_advisory_xact_lock(${CREATE_ADMISSION_LOCK_ID})`;
     if (input.artifactId) {
       const available = await transaction.artifact.findFirst({ where: { id: input.artifactId, workspaceId: input.workspaceId, lifecycleStatus: ArtifactLifecycleStatus.ACTIVE }, select: { id: true } });
       if (!available) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
     }
-    const created = await transaction.agentRun.create({ data: { id: runId, workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, sourceArtifactId: input.artifactId, activeWorkspaceId: input.workspaceId, maxTurns: env.AGENT_MAX_TURNS, maxToolCalls: env.AGENT_MAX_TOOL_CALLS, deadlineAt: new Date(Date.now() + env.AGENT_RUN_DEADLINE_MS), state: { version: 1, phase: "SOURCE", turn: 0, phaseStarted: false } } });
+    const workspaceActiveRuns = await transaction.agentRun.count({ where: { activeWorkspaceId: input.workspaceId } });
+    if (workspaceActiveRuns >= 1) throw new AppError(409, "Workspace already has an active agent run", "WORKSPACE_RUN_CONCURRENCY_LIMIT_EXCEEDED");
+    const userActiveRuns = await transaction.agentRun.count({ where: { requestedBy: input.userId, activeWorkspaceId: { not: null } } });
+    if (userActiveRuns >= env.AGENT_MAX_CONCURRENT_RUNS_PER_USER) throw new AppError(429, "User concurrent agent-run limit exceeded", "USER_RUN_CONCURRENCY_LIMIT_EXCEEDED");
+    const created = await transaction.agentRun.create({ data: { id: runId, workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, sourceArtifactId: input.artifactId, activeWorkspaceId: input.workspaceId, maxTurns: env.AGENT_MAX_TURNS, maxToolCalls: env.AGENT_MAX_TOOL_CALLS, deadlineAt: new Date(Date.now() + env.AGENT_RUN_DEADLINE_MS), state: { version: 1, phase: "SOURCE", turn: 0, phaseStarted: false, tokenBudget } } });
     await transaction.outboxEvent.create({ data: { topic: AGENT_RUN_REQUESTED_TOPIC, aggregateId: runId, payload: toJson({ runId }) } });
     return created;
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
   await audit({ actorId: input.userId, workspaceId: input.workspaceId, runId: run.id, eventType: "AGENT_RUN_CREATED", metadata: { capability: decision.capability, classification, modelProfile: decision.profile.id, sovereign: decision.profile.sovereign } });
   return run;
 }
@@ -170,11 +189,22 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
   const decision = routingDecisionForPersistedRun(persistedRun);
   const leaseId = crypto.randomUUID();
   const startedAt = new Date();
-  const claimed = await prisma.agentRun.updateMany({
-    where: { id: runId, status: RunStatus.PENDING },
-    data: { status: RunStatus.RUNNING, startedAt, leaseId, heartbeatAt: startedAt, leaseExpiresAt: new Date(startedAt.getTime() + env.RUN_LEASE_DURATION_MS) },
-  });
-  if (claimed.count === 0) return;
+  const claimed = await prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw`SELECT pg_advisory_xact_lock(${EXECUTION_ADMISSION_LOCK_ID})`;
+    const activeRuns = await transaction.agentRun.count({ where: { status: RunStatus.RUNNING } });
+    if (activeRuns >= env.QUEUE_PREFETCH) {
+      await transaction.outboxEvent.create({
+        data: { topic: AGENT_RUN_REQUESTED_TOPIC, aggregateId: runId, payload: toJson({ runId }), availableAt: new Date(Date.now() + env.QUEUE_RETRY_DELAY_MS) },
+      });
+      return false;
+    }
+    const transition = await transaction.agentRun.updateMany({
+      where: { id: runId, status: RunStatus.PENDING },
+      data: { status: RunStatus.RUNNING, startedAt, leaseId, heartbeatAt: startedAt, leaseExpiresAt: new Date(startedAt.getTime() + env.RUN_LEASE_DURATION_MS) },
+    });
+    return transition.count > 0;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+  if (!claimed) return;
   const run = await prisma.agentRun.findUniqueOrThrow({ where: { id: runId } });
   const leaseController = new AbortController();
   const deadlineAt = run.deadlineAt ?? persistedDeadline;
@@ -185,7 +215,7 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
   const maxTurns = run.maxTurns ?? env.AGENT_MAX_TURNS;
   const maxToolCalls = run.maxToolCalls ?? env.AGENT_MAX_TOOL_CALLS;
   const toolOptions = { workspaceId: run.workspaceId, leaseId, maxToolCalls };
-  let state = runtimeState(run.state);
+  let state = runtimeState(run.state, configuredTokenBudget());
   const startPhase = async (phase: AgentRuntimeState["phase"], summary: string) => {
     if (state.phase !== phase) return false;
     const wasStarted = state.phaseStarted;
@@ -203,7 +233,7 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
   try {
     signal.throwIfAborted();
     if (state.turn === 0) {
-      await appendMessage(run.id, 0, "system", { event: "RUN_STARTED", model: decision.profile.id, capability: decision.capability, maxTurns, maxToolCalls, deadlineAt: deadlineAt.toISOString() });
+      await appendMessage(run.id, 0, "system", { event: "RUN_STARTED", model: decision.profile.id, capability: decision.capability, maxTurns, maxToolCalls, tokenBudget: state.tokenBudget, deadlineAt: deadlineAt.toISOString() });
       await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId: run.id, eventType: "MODEL_ROUTED", metadata: { profile: decision.profile.id, capability: decision.capability, sovereign: decision.profile.sovereign } });
     }
     const evidence: EvidenceItem[] = [];
@@ -211,7 +241,8 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
     let modelImages: ModelImageInput[] = [];
     let visionInput: Record<string, unknown> | undefined;
     let sourceLimitation: string | undefined;
-    const sourcePhase = await startPhase("SOURCE", sourceArtifactId ? "Reading source artifact" : "No source artifact to read");
+    const searchesKnowledge = decision.capability === "document" || decision.capability === "general";
+    const sourcePhase = await startPhase("SOURCE", sourceArtifactId ? "Reading source artifact and searching knowledge" : searchesKnowledge ? "Searching workspace knowledge" : "No source artifact to read");
     if (sourceArtifactId) {
       const source = await findArtifact(sourceArtifactId);
       if (!source || source.workspaceId !== run.workspaceId) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
@@ -256,6 +287,20 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
         };
       }
     }
+    if (searchesKnowledge) {
+      const searched = await executeRunTool(run.id, "knowledge.search", { query: run.task }, async (persistedToolInput) => {
+        const searchInput = validateToolInput("knowledge.search", persistedToolInput);
+        const citations = await searchAgentKnowledge({ workspaceId: run.workspaceId, classification: run.dataClassification, query: searchInput.query, signal });
+        return { ok: true, summary: citations.length > 0 ? `Retrieved ${citations.length} knowledge citation(s)` : "No relevant knowledge citations found", data: { citations } };
+      }, signal, toolOptions);
+      if (!searched.ok) throw new Error(searched.summary);
+      const citations = (searched.data?.citations ?? []) as KnowledgeSearchCitation[];
+      for (const citation of citations) {
+        evidence.push(await saveEvidence(run.id, EvidenceKind.SOURCE, citation.artifactId, citation.sourceRef, citation.title, citation.text.slice(0, 800), [citation.text]));
+      }
+      if (citations.length > 0) sourceText = [sourceText, knowledgePrompt(citations)].filter(Boolean).join("\n\nRetrieved knowledge citations:\n");
+      if (sourcePhase) await appendMessage(run.id, state.turn, "tool", { tool: "knowledge.search", status: "completed", summary: searched.summary });
+    }
     if (sourcePhase) await finishPhase();
     let analysis = "No model analysis was required.";
     let generatedCode: GeneratedCode | undefined;
@@ -263,7 +308,7 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
     const messages = modelMessages(run.task, decision.capability, sourceText, sourceLimitation);
     const analyzePhase = await startPhase("ANALYZE", "Producing bounded model output");
     const analyzed = await executeRunTool(run.id, "model.analyze", { model: decision.profile.id, capability: decision.capability }, async () => {
-      const selected = await invokeModelWithFallbacks({ runId: run.id, decision, classification: run.dataClassification, ...messages, images: modelImages, signal });
+      const selected = await invokeModelWithFallbacks({ runId: run.id, decision, classification: run.dataClassification, ...messages, images: modelImages, signal, tokenBudget: state.tokenBudget });
       selectedProfile = selected.profile;
       if (decision.capability === "code") {
         try {
@@ -275,6 +320,7 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
             classification: run.dataClassification,
             ...codeRepairMessages(run.task, selected.response.text, sourceText, sourceLimitation),
             signal,
+            tokenBudget: state.tokenBudget,
           });
           selectedProfile = repaired.profile;
           generatedCode = parseGeneratedCode(repaired.response.text);
@@ -300,9 +346,10 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
     if (analyzePhase) await appendMessage(run.id, state.turn, "tool", { tool: "model.analyze", status: "completed", summary: analyzed.summary });
     evidence.push(await saveEvidence(run.id, EvidenceKind.MODEL_OUTPUT, undefined, "model-analysis", "Model output", analysis, [analysis]));
     if (analyzePhase) await finishPhase();
+    const sourceEvidence = evidence.filter((item) => item.sourceRef.startsWith("artifact:"));
     const result: Record<string, unknown> = {
       analysis,
-      sourceEvidenceIds: evidence.filter((item) => item.sourceRef.startsWith("artifact:")).map((item) => item.id),
+      sourceEvidenceIds: sourceEvidence.map((item) => item.id),
       modelOutputEvidenceIds: evidence.filter((item) => item.sourceRef === "model-analysis").map((item) => item.id),
       model: selectedProfile.id,
       capability: decision.capability,
@@ -338,8 +385,7 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
       }, signal, toolOptions);
       result.sandbox = sandbox;
       if (sandbox.errorCode === "SANDBOX_NON_ZERO_EXIT") throw new AppError(422, sandbox.summary, sandbox.errorCode);
-    } else if (sourceArtifactId) {
-      const sourceEvidence = evidence.filter((item) => item.sourceRef.startsWith("artifact:"));
+    } else if (sourceEvidence.length > 0 && (sourceArtifactId || decision.capability === "document")) {
       const evidenceIds = sourceEvidence.map((item) => item.id);
       const format = selectDeliverableFormat(run.task);
       const toolName = format === "pptx" ? "deliverable.createPresentation" : format === "xlsx" ? "deliverable.createSpreadsheet" : "deliverable.createApprovalNote";
@@ -350,7 +396,7 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
           ? { bytes: await generatePptx(presentationInput(run.task, analysis, sourceEvidence)), filename: `presentation-${run.id}.pptx`, mimeType: PPTX_MIME_TYPE, summary: "Generated cited PPTX" }
           : format === "xlsx"
             ? { bytes: await generateXlsx(spreadsheetInput(run.task, analysis, sourceEvidence)), filename: `workbook-${run.id}.xlsx`, mimeType: XLSX_MIME_TYPE, summary: "Generated cited XLSX" }
-            : { bytes: Buffer.from(await approvalNoteDocx(run.task, evidence)), filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", summary: "Generated approval-note DOCX" };
+            : { bytes: Buffer.from(await approvalNoteDocx(run.task, sourceEvidence)), filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", summary: "Generated approval-note DOCX" };
         signal.throwIfAborted();
         const artifact = await createArtifact({ workspaceId: run.workspaceId, userId: run.requestedBy, filename: output.filename, mimeType: output.mimeType, kind: "GENERATED_DOCX", classification: run.dataClassification, bytes: output.bytes, idempotencyKey: `run-${run.id}-${format}` });
         result.artifact = artifact;
@@ -374,6 +420,14 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
       return;
     }
     const reason = error instanceof Error ? error.message : "Unknown run failure";
+    if (isTerminalModelError(error)) {
+      const failed = await prisma.agentRun.updateMany({
+        where: { id: runId, status: RunStatus.RUNNING, leaseId },
+        data: { status: RunStatus.FAILED, result: toJson({ error: reason, code: error.code }), activeWorkspaceId: null, leaseId: null, heartbeatAt: null, leaseExpiresAt: null, completedAt: new Date() },
+      });
+      if (failed.count > 0) await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId, eventType: "AGENT_RUN_FAILED", metadata: { reason, code: error.code, exhausted: false } });
+      return;
+    }
     const released = await prisma.agentRun.updateMany({ where: { id: runId, status: RunStatus.RUNNING, leaseId }, data: { status: RunStatus.PENDING, startedAt: null, leaseId: null, heartbeatAt: null, leaseExpiresAt: null } });
     if (released.count > 0) await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId, eventType: "AGENT_RUN_ATTEMPT_FAILED", metadata: { reason } });
     else if ((await prisma.agentRun.findUnique({ where: { id: runId }, select: { status: true } }))?.status === RunStatus.CANCELLED) return;

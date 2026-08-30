@@ -23,6 +23,12 @@ describe("agent tool registry", () => {
     expect(toolRequiresApproval("deliverable.createSpreadsheet")).toBe(false);
   });
 
+  it("registers bounded knowledge search as a low-risk tool without client scope filters", () => {
+    expect(agentToolRegistry["knowledge.search"]).toMatchObject({ risk: ToolRiskLevel.LOW, requiresApproval: false });
+    expect(validateToolInput("knowledge.search", { query: "valve maintenance" })).toEqual({ query: "valve maintenance" });
+    expect(() => validateToolInput("knowledge.search", { query: "valve maintenance", workspaceId: crypto.randomUUID() })).toThrow();
+  });
+
   it("validates tool-specific outputs", () => {
     expect(validateToolOutput("sandbox.execute", { ok: true, summary: "complete", stdout: "2", stderr: "", exitCode: 0 })).toMatchObject({ exitCode: 0 });
     expect(() => validateToolOutput("artifact.read", { ok: true, summary: "read", data: { text: "missing character count" } })).toThrow();

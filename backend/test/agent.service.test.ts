@@ -1,10 +1,13 @@
 import { ApprovalStatus, DataClassification, RunStatus, RunToolCallStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AppError } from "../src/lib/errors.js";
 
-const { artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock, generatePptxMock, generateXlsxMock, getArtifactBoundedMock, invokeModelMock, outboxEventMock, renderPdfPagesMock, runCodeMock, runMessageMock, runToolCallMock, toolApprovalMock, transactionMock } = vi.hoisted(() => ({
+const { approvalNoteMock, artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock, generatePptxMock, generateXlsxMock, getArtifactBoundedMock, invokeModelMock, knowledgeSearchMock, outboxEventMock, queryRawMock, renderPdfPagesMock, runCodeMock, runMessageMock, runToolCallMock, toolApprovalMock, transactionMock } = vi.hoisted(() => ({
+  approvalNoteMock: vi.fn(),
   artifactMock: { create: vi.fn(), find: vi.fn() },
   auditMock: vi.fn(),
   agentRunMock: {
+    count: vi.fn(),
     create: vi.fn(),
     findFirst: vi.fn(),
     findUnique: vi.fn(),
@@ -17,6 +20,7 @@ const { artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock
   generateXlsxMock: vi.fn(),
   getArtifactBoundedMock: vi.fn(),
   invokeModelMock: vi.fn(),
+  knowledgeSearchMock: vi.fn(),
   outboxEventMock: { create: vi.fn() },
   renderPdfPagesMock: vi.fn(),
   runCodeMock: vi.fn(),
@@ -24,6 +28,7 @@ const { artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock
   runToolCallMock: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), count: vi.fn() },
   toolApprovalMock: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
   transactionMock: vi.fn(),
+  queryRawMock: vi.fn(),
 }));
 
 vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock, evidence: evidenceMock, outboxEvent: outboxEventMock, runMessage: runMessageMock, runToolCall: runToolCallMock, toolApproval: toolApprovalMock, $transaction: transactionMock } }));
@@ -33,6 +38,8 @@ vi.mock("../src/infrastructure/pdf-renderer/pdf-renderer-client.js", () => ({ re
 vi.mock("../src/infrastructure/sandbox/sandbox-client.js", () => ({ runCode: runCodeMock }));
 vi.mock("../src/modules/artifacts/artifacts.service.js", () => ({ createArtifact: artifactMock.create, findArtifact: artifactMock.find, getArtifactBounded: getArtifactBoundedMock }));
 vi.mock("../src/modules/artifacts/artifact-extraction.service.js", () => ({ extractArtifact: extractArtifactMock }));
+vi.mock("../src/modules/agent/agent-knowledge-search.js", () => ({ searchAgentKnowledge: knowledgeSearchMock }));
+vi.mock("../src/modules/agent/approval-note.js", () => ({ approvalNoteDocx: approvalNoteMock }));
 vi.mock("../src/modules/deliverables/pptx-generator.js", () => ({ generatePptx: generatePptxMock, PPTX_MIME_TYPE: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }));
 vi.mock("../src/modules/deliverables/xlsx-generator.js", () => ({ generateXlsx: generateXlsxMock, XLSX_MIME_TYPE: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
 
@@ -43,9 +50,11 @@ describe("agent run access", () => {
     vi.clearAllMocks();
     transactionMock.mockImplementation((input) => Array.isArray(input)
       ? Promise.all(input)
-      : input({ agentRun: agentRunMock, outboxEvent: outboxEventMock, runToolCall: runToolCallMock, toolApproval: toolApprovalMock }));
+      : input({ $queryRaw: queryRawMock, agentRun: agentRunMock, outboxEvent: outboxEventMock, runToolCall: runToolCallMock, toolApproval: toolApprovalMock }));
+    agentRunMock.count.mockResolvedValue(0);
     runToolCallMock.count.mockResolvedValue(0);
     evidenceMock.findFirst.mockResolvedValue(null);
+    knowledgeSearchMock.mockResolvedValue([]);
   });
 
   it("creates a run and queue outbox event atomically", async () => {
@@ -56,9 +65,131 @@ describe("agent run access", () => {
     await expect(createRun({ workspaceId: "workspace-1", userId: "user-1", task: "Summarize the public report", dataClassification: DataClassification.PUBLIC })).resolves.toEqual(run);
 
     expect(transactionMock).toHaveBeenCalledOnce();
-    expect(agentRunMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ sourceArtifactId: undefined }) });
+    expect(agentRunMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      sourceArtifactId: undefined,
+      state: expect.objectContaining({ tokenBudget: { maxInputTokens: 32768, maxOutputTokens: 8192, maxTotalTokens: 40960 } }),
+    }) });
     expect(outboxEventMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ topic: "agent.run.requested", aggregateId: expect.any(String), payload: { runId: expect.any(String) } }) });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ runId: "run-1", eventType: "AGENT_RUN_CREATED" }));
+    expect(queryRawMock.mock.invocationCallOrder[0]).toBeLessThan(agentRunMock.count.mock.invocationCallOrder[0]);
+    expect(agentRunMock.count.mock.invocationCallOrder[1]).toBeLessThan(agentRunMock.create.mock.invocationCallOrder[0]);
+    expect(transactionMock).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "ReadCommitted" });
+  });
+
+  it("rejects workspace and user concurrency limits at their boundaries", async () => {
+    agentRunMock.count.mockResolvedValueOnce(1);
+    await expect(createRun({ workspaceId: "workspace-1", userId: "user-1", task: "Summarize the public report", dataClassification: DataClassification.PUBLIC }))
+      .rejects.toMatchObject({ status: 409, code: "WORKSPACE_RUN_CONCURRENCY_LIMIT_EXCEEDED" });
+
+    vi.clearAllMocks();
+    transactionMock.mockImplementation((work) => work({ $queryRaw: queryRawMock, agentRun: agentRunMock, outboxEvent: outboxEventMock }));
+    agentRunMock.count.mockResolvedValueOnce(0).mockResolvedValueOnce(2);
+    await expect(createRun({ workspaceId: "workspace-2", userId: "user-1", task: "Summarize another public report", dataClassification: DataClassification.PUBLIC }))
+      .rejects.toMatchObject({ status: 429, code: "USER_RUN_CONCURRENCY_LIMIT_EXCEEDED" });
+
+    expect(agentRunMock.create).not.toHaveBeenCalled();
+    expect(outboxEventMock.create).not.toHaveBeenCalled();
+  });
+
+  it("serializes concurrent user admission so only the remaining slot is accepted", async () => {
+    let activeUserRuns = 1;
+    let lockTail = Promise.resolve();
+    transactionMock.mockImplementation(async (work) => {
+      const previousLock = lockTail;
+      let releaseLock!: () => void;
+      lockTail = new Promise<void>((resolve) => { releaseLock = resolve; });
+      const transaction = {
+        $queryRaw: vi.fn(async () => previousLock),
+        agentRun: agentRunMock,
+        outboxEvent: outboxEventMock,
+      };
+      try {
+        return await work(transaction);
+      } finally {
+        releaseLock();
+      }
+    });
+    agentRunMock.count.mockImplementation(({ where }) => Promise.resolve(typeof where.activeWorkspaceId === "string" ? 0 : activeUserRuns));
+    agentRunMock.create.mockImplementation(({ data }) => {
+      activeUserRuns += 1;
+      return Promise.resolve({ ...data, status: RunStatus.PENDING });
+    });
+    outboxEventMock.create.mockResolvedValue({ id: "event-1" });
+
+    const results = await Promise.allSettled([
+      createRun({ workspaceId: "workspace-1", userId: "user-1", task: "Summarize the first public report", dataClassification: DataClassification.PUBLIC }),
+      createRun({ workspaceId: "workspace-2", userId: "user-1", task: "Summarize the second public report", dataClassification: DataClassification.PUBLIC }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(agentRunMock.create).toHaveBeenCalledOnce();
+    expect(activeUserRuns).toBe(2);
+  });
+
+  it("defers a pending run without consuming retries when global DB admission is full", async () => {
+    const run = {
+      id: "run-capacity",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Explain preventive maintenance",
+      taskCapability: "general",
+      modelProfile: "local-general",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.INTERNAL,
+      sourceArtifactId: null,
+      status: RunStatus.PENDING,
+      deadlineAt: new Date(Date.now() + 60_000),
+    };
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.count.mockResolvedValue(1);
+
+    await expect(processRun(run.id)).resolves.toBeUndefined();
+
+    expect(queryRawMock).toHaveBeenCalledOnce();
+    expect(agentRunMock.updateMany).not.toHaveBeenCalled();
+    expect(outboxEventMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      topic: "agent.run.requested",
+      aggregateId: run.id,
+      payload: { runId: run.id },
+      availableAt: expect.any(Date),
+    }) });
+    expect(transactionMock).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "ReadCommitted" });
+  });
+
+  it("terminally fails token-budget errors without queue retry", async () => {
+    const run = {
+      id: "run-budget",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Explain preventive maintenance",
+      taskCapability: "general",
+      modelProfile: "local-general",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.INTERNAL,
+      sourceArtifactId: null,
+      status: RunStatus.PENDING,
+      state: { version: 1, phase: "SOURCE", turn: 0, phaseStarted: false, tokenBudget: { maxInputTokens: 10, maxOutputTokens: 5, maxTotalTokens: 15 } },
+      deadlineAt: new Date(Date.now() + 60_000),
+      maxTurns: 4,
+      maxToolCalls: 5,
+    };
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    runToolCallMock.findUnique.mockResolvedValue(null);
+    runToolCallMock.create.mockResolvedValue({});
+    runMessageMock.create.mockResolvedValue({});
+    invokeModelMock.mockRejectedValue(new AppError(422, "Agent run total-token budget exceeded", "RUN_TOKEN_BUDGET_EXCEEDED"));
+
+    await expect(processRun(run.id)).resolves.toBeUndefined();
+
+    expect(agentRunMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: run.id, status: RunStatus.RUNNING }),
+      data: expect.objectContaining({ status: RunStatus.FAILED, result: { error: "Agent run total-token budget exceeded", code: "RUN_TOKEN_BUDGET_EXCEEDED" }, activeWorkspaceId: null }),
+    }));
+    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: "AGENT_RUN_FAILED", metadata: expect.objectContaining({ exhausted: false }) }));
+    expect(auditMock).not.toHaveBeenCalledWith(expect.objectContaining({ eventType: "AGENT_RUN_ATTEMPT_FAILED" }));
   });
 
   it("selects a local profile for restricted data instead of the higher-priority remote profile", async () => {
@@ -120,6 +251,69 @@ describe("agent run access", () => {
       where: expect.objectContaining({ id: "run-1", status: RunStatus.RUNNING }),
       data: expect.objectContaining({ modelProfile: "local-general", modelReason: expect.stringContaining("completed the model invocation") }),
     }));
+  });
+
+  it("persists retrieved citations and supplies only source evidence to the model and deliverable", async () => {
+    const artifactId = "10000000-0000-4000-8000-000000000011";
+    const sourceRef = `artifact:${artifactId}#page=4&lines=8-9`;
+    const run = {
+      id: "run-grounded",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Create an approval note for the valve inspection interval",
+      taskCapability: "document",
+      modelProfile: "local-general",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.INTERNAL,
+      sourceArtifactId: null,
+      status: RunStatus.PENDING,
+    };
+    const selectedProfile = { id: "local-general", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["general", "document"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    runToolCallMock.findUnique.mockResolvedValue(null);
+    runToolCallMock.create.mockResolvedValue({});
+    runToolCallMock.update.mockResolvedValue({});
+    runMessageMock.create.mockResolvedValue({});
+    evidenceMock.create
+      .mockResolvedValueOnce({ id: "20000000-0000-4000-8000-000000000011" })
+      .mockResolvedValueOnce({ id: "20000000-0000-4000-8000-000000000012" });
+    knowledgeSearchMock.mockResolvedValue([{
+      artifactId,
+      title: "Inspection manual - Valves",
+      text: "Valve V-101 must be inspected every 30 days.",
+      sourceRef,
+      score: 0.92,
+    }]);
+    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Inspect V-101 every 30 days." } });
+    approvalNoteMock.mockResolvedValue(Buffer.from("docx"));
+    artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000011", sizeBytes: 4 });
+
+    await processRun(run.id);
+
+    expect(knowledgeSearchMock).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: run.workspaceId,
+      classification: DataClassification.INTERNAL,
+      query: run.task,
+      signal: expect.any(AbortSignal),
+    }));
+    expect(evidenceMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      kind: "SOURCE",
+      artifactId,
+      sourceRef,
+      facts: ["Valve V-101 must be inspected every 30 days."],
+    }) });
+    expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining(sourceRef),
+    }));
+    expect(approvalNoteMock).toHaveBeenCalledWith(run.task, [{
+      id: "20000000-0000-4000-8000-000000000011",
+      title: "Inspection manual - Valves",
+      summary: "Valve V-101 must be inspected every 30 days.",
+      facts: ["Valve V-101 must be inspected every 30 days."],
+      sourceRef,
+    }]);
   });
 
   it("sends a bounded original image with extraction text without persisting its bytes", async () => {
