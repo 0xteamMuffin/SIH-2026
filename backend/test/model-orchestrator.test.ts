@@ -8,6 +8,7 @@ const { askModelMock, modelInvocationMock } = vi.hoisted(() => ({
   modelInvocationMock: {
     aggregate: vi.fn(),
     create: vi.fn(),
+    findFirst: vi.fn(),
     update: vi.fn(),
   },
 }));
@@ -31,11 +32,13 @@ const profile = (id: string, location: "local" | "remote" = "local"): ModelProfi
 });
 
 const response = { text: "answer", provider: "fallback-provider", modelId: "fallback-model", finishReason: "stop", latencyMs: 25, usage: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } };
+const tokenBudget = { maxInputTokens: 100, maxOutputTokens: 50, maxTotalTokens: 150 };
 
 describe("model fallback orchestration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    modelInvocationMock.aggregate.mockResolvedValue({ _max: { attempt: null } });
+    modelInvocationMock.aggregate.mockResolvedValue({ _max: { attempt: null }, _sum: { promptTokens: null, completionTokens: null, totalTokens: null } });
+    modelInvocationMock.findFirst.mockResolvedValue(null);
     modelInvocationMock.create.mockImplementation(({ data }) => Promise.resolve({ id: `invocation-${data.attempt}` }));
     modelInvocationMock.update.mockResolvedValue({});
   });
@@ -51,6 +54,7 @@ describe("model fallback orchestration", () => {
       classification: DataClassification.INTERNAL,
       system: "system",
       prompt: "prompt",
+      tokenBudget,
     })).resolves.toEqual({ profile: fallback, response });
 
     expect(askModelMock.mock.calls.map(([selected]) => selected.id)).toEqual(["primary", "fallback"]);
@@ -72,10 +76,11 @@ describe("model fallback orchestration", () => {
       system: "system",
       prompt: "prompt",
       images: [image],
+      tokenBudget,
     });
 
     expect(askModelMock).toHaveBeenCalledOnce();
-    expect(askModelMock).toHaveBeenCalledWith(local, DataClassification.CONFIDENTIAL, "system", "prompt", undefined, [image]);
+    expect(askModelMock).toHaveBeenCalledWith({ ...local, maxOutputTokens: tokenBudget.maxOutputTokens }, DataClassification.CONFIDENTIAL, "system", "prompt", undefined, [image]);
     expect(modelInvocationMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ profileId: "local", attempt: 1 }) });
     const telemetryCalls = JSON.stringify({ creates: modelInvocationMock.create.mock.calls, updates: modelInvocationMock.update.mock.calls });
     expect(telemetryCalls).not.toContain('"image"');
@@ -94,6 +99,7 @@ describe("model fallback orchestration", () => {
       classification: DataClassification.INTERNAL,
       system: "system",
       prompt: "prompt",
+      tokenBudget,
     })).rejects.toBe(error);
 
     expect(askModelMock).toHaveBeenCalledOnce();
@@ -102,7 +108,7 @@ describe("model fallback orchestration", () => {
   });
 
   it("continues attempt ordering from prior worker attempts", async () => {
-    modelInvocationMock.aggregate.mockResolvedValue({ _max: { attempt: 3 } });
+    modelInvocationMock.aggregate.mockResolvedValue({ _max: { attempt: 3 }, _sum: { promptTokens: 12, completionTokens: 4, totalTokens: 16 } });
     askModelMock.mockResolvedValue(response);
 
     await invokeModelWithFallbacks({
@@ -111,8 +117,66 @@ describe("model fallback orchestration", () => {
       classification: DataClassification.INTERNAL,
       system: "system",
       prompt: "prompt",
+      tokenBudget,
     });
 
     expect(modelInvocationMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ attempt: 4 }) });
+  });
+
+  it("allows an invocation that reaches the exact token boundaries", async () => {
+    askModelMock.mockResolvedValue({ ...response, usage: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } });
+
+    await expect(invokeModelWithFallbacks({
+      runId: "run-1",
+      decision: { capability: "general", profile: profile("primary"), fallbacks: [], reason: "test" },
+      classification: DataClassification.INTERNAL,
+      system: "system",
+      prompt: "prompt",
+      tokenBudget: { maxInputTokens: 4, maxOutputTokens: 2, maxTotalTokens: 6 },
+    })).resolves.toEqual({ profile: profile("primary"), response: { ...response, usage: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } } });
+  });
+
+  it("stops before another fallback when persisted usage has exhausted a budget", async () => {
+    modelInvocationMock.aggregate.mockResolvedValue({ _max: { attempt: 1 }, _sum: { promptTokens: 100, completionTokens: 10, totalTokens: 110 } });
+
+    await expect(invokeModelWithFallbacks({
+      runId: "run-1",
+      decision: { capability: "general", profile: profile("primary"), fallbacks: [profile("fallback")], reason: "test" },
+      classification: DataClassification.INTERNAL,
+      system: "system",
+      prompt: "prompt",
+      tokenBudget,
+    })).rejects.toMatchObject({ code: "RUN_TOKEN_BUDGET_EXCEEDED" });
+
+    expect(askModelMock).not.toHaveBeenCalled();
+    expect(modelInvocationMock.create).not.toHaveBeenCalled();
+  });
+
+  it("persists usage and fails after a response exceeds the input budget", async () => {
+    askModelMock.mockResolvedValue({ ...response, usage: { promptTokens: 101, completionTokens: 2, totalTokens: 103 } });
+
+    await expect(invokeModelWithFallbacks({
+      runId: "run-1",
+      decision: { capability: "general", profile: profile("primary"), fallbacks: [], reason: "test" },
+      classification: DataClassification.INTERNAL,
+      system: "system",
+      prompt: "prompt",
+      tokenBudget,
+    })).rejects.toMatchObject({ code: "RUN_TOKEN_BUDGET_EXCEEDED", usage: { inputTokens: 101, outputTokens: 2, totalTokens: 103 } });
+
+    expect(modelInvocationMock.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ promptTokens: 101, completionTokens: 2, totalTokens: 103 }) }));
+  });
+
+  it("fails closed when a successful provider omits usage", async () => {
+    askModelMock.mockResolvedValue({ ...response, usage: undefined });
+
+    await expect(invokeModelWithFallbacks({
+      runId: "run-1",
+      decision: { capability: "general", profile: profile("primary"), fallbacks: [], reason: "test" },
+      classification: DataClassification.INTERNAL,
+      system: "system",
+      prompt: "prompt",
+      tokenBudget,
+    })).rejects.toMatchObject({ code: "RUN_TOKEN_USAGE_UNAVAILABLE" });
   });
 });

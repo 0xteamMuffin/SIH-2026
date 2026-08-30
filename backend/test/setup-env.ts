@@ -30,3 +30,7 @@ process.env.APP_MODE = "development";
 process.env.MODEL_CONFIG_PATH = "config/models.json";
 process.env.ALLOW_REMOTE_INFERENCE = "true";
 process.env.VISION_MAX_IMAGE_BYTES = "10485760";
+process.env.AGENT_MAX_INPUT_TOKENS = "32768";
+process.env.AGENT_MAX_OUTPUT_TOKENS = "8192";
+process.env.AGENT_MAX_TOTAL_TOKENS = "40960";
+process.env.AGENT_MAX_CONCURRENT_RUNS_PER_USER = "2";

@@ -12,6 +12,9 @@ Only these settings control model infrastructure:
 | `ALLOW_REMOTE_INFERENCE` | Enables profiles marked `remote`. Must be `false` in sovereign mode. |
 | `REMOTE_MODEL_API_KEY` | Credential used by the example remote provider. Additional providers may reference a different environment variable. |
 | `MODEL_REQUEST_TIMEOUT_MS` | Maximum duration of one model request. |
+| `AGENT_MAX_INPUT_TOKENS` | Cumulative prompt-token budget snapshotted for each new agent run. |
+| `AGENT_MAX_OUTPUT_TOKENS` | Cumulative completion-token budget snapshotted for each new agent run. |
+| `AGENT_MAX_TOTAL_TOKENS` | Cumulative total-token budget snapshotted for each new agent run. |
 | `VISION_MAX_IMAGE_BYTES` | Maximum combined image payload accepted for one vision request. Defaults to 10 MiB and cannot exceed the 25 MiB upload limit. |
 | `PDF_RENDERER_URL`, `PDF_RENDERER_API_TOKEN` | Internal authenticated PDF renderer endpoint and shared credential. |
 | `PDF_RENDER_TIMEOUT_MS` | End-to-end render deadline; cancellation also terminates the sidecar worker thread. |
