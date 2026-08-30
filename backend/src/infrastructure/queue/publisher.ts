@@ -1,0 +1,49 @@
+import type { ConfirmChannel, Options } from "amqplib";
+import { AGENT_RUN_REQUESTED_TOPIC, parseAgentRunRequested, type AgentRunRequestedMessage } from "./agent-run-message.js";
+import { queueTopology } from "./rabbitmq.js";
+
+export type AgentRunDestination = "run" | "retry" | "dead";
+
+function confirmedPublish(channel: ConfirmChannel, exchange: string, routingKey: string, content: Buffer, options: Options.Publish) {
+  return new Promise<void>((resolve, reject) => {
+    channel.publish(exchange, routingKey, content, options, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+export async function publishAgentRunRequested(
+  channel: ConfirmChannel,
+  message: AgentRunRequestedMessage,
+  options: { destination?: AgentRunDestination; messageId?: string; retryCount?: number; error?: string } = {},
+) {
+  const validated = parseAgentRunRequested(message);
+  const destination = options.destination ?? "run";
+  const exchange = destination === "dead" ? queueTopology.deadExchange : queueTopology.exchange;
+  const routingKey = destination === "run"
+    ? queueTopology.runRoutingKey
+    : destination === "retry" ? queueTopology.retryRoutingKey : queueTopology.deadRoutingKey;
+  const publishOptions: Options.Publish = {
+    persistent: true,
+    contentType: "application/json",
+    type: AGENT_RUN_REQUESTED_TOPIC,
+    messageId: options.messageId,
+    headers: {
+      ...(options.retryCount === undefined ? {} : { "x-retry-count": options.retryCount }),
+      ...(options.error === undefined ? {} : { "x-last-error": options.error.slice(0, 512) }),
+    },
+  };
+
+  await confirmedPublish(channel, exchange, routingKey, Buffer.from(JSON.stringify(validated)), publishOptions);
+}
+
+export async function publishInvalidAgentRunToDeadQueue(channel: ConfirmChannel, content: Buffer, options: { messageId?: string; error: string }) {
+  await confirmedPublish(channel, queueTopology.deadExchange, queueTopology.deadRoutingKey, content, {
+    persistent: true,
+    contentType: "application/json",
+    type: AGENT_RUN_REQUESTED_TOPIC,
+    messageId: options.messageId,
+    headers: { "x-invalid-message": true, "x-last-error": options.error.slice(0, 512) },
+  });
+}
