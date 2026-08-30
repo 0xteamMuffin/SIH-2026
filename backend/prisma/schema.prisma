@@ -90,26 +90,27 @@ model WorkspaceMember {
 }
 
 model Artifact {
-  id                 String                   @id @default(uuid()) @db.Uuid
-  workspaceId        String                   @map("workspace_id") @db.Uuid
-  createdBy          String                   @map("created_by") @db.Uuid
-  kind               ArtifactKind
-  classification     DataClassification       @default(INTERNAL)
-  sha256             String?
-  detectedMimeType   String?                  @map("detected_mime_type")
-  extractionStatus   ArtifactExtractionStatus @default(NOT_REQUIRED) @map("extraction_status")
-  extractedObjectKey String?                  @map("extracted_object_key")
-  extractionMetadata Json?                    @map("extraction_metadata")
-  extractionError    String?                  @map("extraction_error")
-  extractedAt        DateTime?                @map("extracted_at")
-  filename           String
-  mimeType           String                   @map("mime_type")
-  objectKey          String                   @unique @map("object_key")
-  sizeBytes          BigInt                   @map("size_bytes")
-  createdAt          DateTime                 @default(now()) @map("created_at")
-  workspace          Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  creator            User                     @relation(fields: [createdBy], references: [id])
-  evidence           Evidence[]
+  id                  String                   @id @default(uuid()) @db.Uuid
+  workspaceId         String                   @map("workspace_id") @db.Uuid
+  createdBy           String                   @map("created_by") @db.Uuid
+  kind                ArtifactKind
+  classification      DataClassification       @default(INTERNAL)
+  sha256              String?
+  detectedMimeType    String?                  @map("detected_mime_type")
+  extractionStatus    ArtifactExtractionStatus @default(NOT_REQUIRED) @map("extraction_status")
+  extractedObjectKey  String?                  @map("extracted_object_key")
+  extractionMetadata  Json?                    @map("extraction_metadata")
+  extractionError     String?                  @map("extraction_error")
+  extractionStartedAt DateTime?                @map("extraction_started_at")
+  extractedAt         DateTime?                @map("extracted_at")
+  filename            String
+  mimeType            String                   @map("mime_type")
+  objectKey           String                   @unique @map("object_key")
+  sizeBytes           BigInt                   @map("size_bytes")
+  createdAt           DateTime                 @default(now()) @map("created_at")
+  workspace           Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator             User                     @relation(fields: [createdBy], references: [id])
+  evidence            Evidence[]
 
   @@index([workspaceId, extractionStatus])
   @@map("artifacts")

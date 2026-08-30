@@ -8,8 +8,8 @@ export async function putArtifact(objectKey: string, body: Buffer, mimeType: str
   await client.send(new PutObjectCommand({ Bucket: env.MINIO_BUCKET, Key: objectKey, Body: body, ContentType: mimeType }));
 }
 
-export async function getArtifact(objectKey: string): Promise<Buffer> {
-  const response = await client.send(new GetObjectCommand({ Bucket: env.MINIO_BUCKET, Key: objectKey }));
+export async function getArtifact(objectKey: string, signal?: AbortSignal): Promise<Buffer> {
+  const response = await client.send(new GetObjectCommand({ Bucket: env.MINIO_BUCKET, Key: objectKey }), { abortSignal: signal });
   const chunks: Buffer[] = [];
   for await (const chunk of response.Body as Readable) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   return Buffer.concat(chunks);
