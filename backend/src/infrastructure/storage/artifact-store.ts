@@ -1,6 +1,7 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Readable } from "node:stream";
 import { env } from "../../config/env.js";
+import { AppError } from "../../lib/errors.js";
 
 const client = new S3Client({ endpoint: env.S3_ENDPOINT, region: env.S3_REGION, forcePathStyle: true, credentials: { accessKeyId: env.S3_ACCESS_KEY, secretAccessKey: env.S3_SECRET_KEY } });
 
@@ -13,4 +14,20 @@ export async function getArtifact(objectKey: string, signal?: AbortSignal): Prom
   const chunks: Buffer[] = [];
   for await (const chunk of response.Body as Readable) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   return Buffer.concat(chunks);
+}
+
+export async function getArtifactBounded(objectKey: string, maxBytes: number, signal?: AbortSignal): Promise<Buffer> {
+  const response = await client.send(new GetObjectCommand({ Bucket: env.MINIO_BUCKET, Key: objectKey }), { abortSignal: signal });
+  if (response.ContentLength !== undefined && response.ContentLength > maxBytes) {
+    throw new AppError(413, `Image exceeds the configured ${maxBytes}-byte vision limit`, "VISION_IMAGE_TOO_LARGE");
+  }
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  for await (const chunk of response.Body as Readable) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += bytes.byteLength;
+    if (totalBytes > maxBytes) throw new AppError(413, `Image exceeds the configured ${maxBytes}-byte vision limit`, "VISION_IMAGE_TOO_LARGE");
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks, totalBytes);
 }

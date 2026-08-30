@@ -17,6 +17,7 @@ const remoteProfile: ModelProfile = {
   maxOutputTokens: 2_048,
 };
 const localProfile: ModelProfile = { ...remoteProfile, id: "local-test", providerId: "local-provider", location: "local", baseUrl: "http://localhost:11434/v1", apiKeyEnv: undefined, modelId: "local/model", sovereign: true };
+const localVisionProfile: ModelProfile = { ...localProfile, id: "local-vision", capabilities: ["vision"] };
 
 describe("model provider policy", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -49,7 +50,40 @@ describe("model provider policy", () => {
     expect(result).toMatchObject({ text: "Completed analysis.", provider: "local-provider", modelId: "local/model", finishReason: "stop", usage: { promptTokens: 12, completionTokens: 4, totalTokens: 16 } });
     expect(fetchMock).toHaveBeenCalledWith("http://localhost:11434/v1/chat/completions", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     const request = fetchMock.mock.calls[0][1];
-    expect(JSON.parse(String(request?.body))).toMatchObject({ model: "local/model", max_tokens: 2_048 });
+    const body = JSON.parse(String(request?.body));
+    expect(body).toMatchObject({ model: "local/model", max_tokens: 2_048 });
+    expect(body.messages[1]).toEqual({ role: "user", content: "prompt" });
+  });
+
+  it("uses OpenAI-compatible text and image parts without changing the text prompt", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { content: "Observed image." } }],
+    }), { status: 200 }));
+    const image = { mimeType: "image/png" as const, bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]) };
+
+    await askModel(localVisionProfile, DataClassification.INTERNAL, "system", "OCR text", undefined, image);
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.messages[1].content[0]).toEqual({ type: "text", text: "OCR text" });
+    expect(body.messages[1].content[1].type).toBe("image_url");
+    expect(body.messages[1].content[1].image_url.url).toMatch(/^data:image\/png;base64,/);
+    expect(body.messages[1].content[1].image_url.url.length).toBe("data:image/png;base64,".length + image.bytes.toString("base64").length);
+  });
+
+  it("rejects TIFF explicitly before contacting the provider", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(askModel(localVisionProfile, DataClassification.INTERNAL, "system", "OCR text", undefined, { mimeType: "image/tiff", bytes: Buffer.from([1]) }))
+      .rejects.toMatchObject({ status: 415, code: "VISION_PROVIDER_MIME_UNSUPPORTED" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects images above the configured byte limit before contacting the provider", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(askModel(localVisionProfile, DataClassification.INTERNAL, "system", "OCR text", undefined, { mimeType: "image/webp", bytes: Buffer.alloc(10 * 1024 * 1024 + 1) }))
+      .rejects.toMatchObject({ status: 413, code: "VISION_IMAGE_TOO_LARGE" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("normalizes rate limits without exposing provider response bodies", async () => {

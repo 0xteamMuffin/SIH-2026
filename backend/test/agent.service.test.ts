@@ -1,7 +1,8 @@
 import { DataClassification, RunStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { auditMock, agentRunMock, evidenceMock, invokeModelMock, outboxEventMock, runMessageMock, runToolCallMock, transactionMock } = vi.hoisted(() => ({
+const { artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock, getArtifactBoundedMock, invokeModelMock, outboxEventMock, runMessageMock, runToolCallMock, transactionMock } = vi.hoisted(() => ({
+  artifactMock: { create: vi.fn(), find: vi.fn() },
   auditMock: vi.fn(),
   agentRunMock: {
     create: vi.fn(),
@@ -11,6 +12,8 @@ const { auditMock, agentRunMock, evidenceMock, invokeModelMock, outboxEventMock,
     updateMany: vi.fn(),
   },
   evidenceMock: { create: vi.fn() },
+  extractArtifactMock: vi.fn(),
+  getArtifactBoundedMock: vi.fn(),
   invokeModelMock: vi.fn(),
   outboxEventMock: { create: vi.fn() },
   runMessageMock: { create: vi.fn() },
@@ -21,6 +24,8 @@ const { auditMock, agentRunMock, evidenceMock, invokeModelMock, outboxEventMock,
 vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock, evidence: evidenceMock, outboxEvent: outboxEventMock, runMessage: runMessageMock, runToolCall: runToolCallMock, $transaction: transactionMock } }));
 vi.mock("../src/lib/audit.js", () => ({ audit: auditMock }));
 vi.mock("../src/infrastructure/models/model-orchestrator.js", () => ({ invokeModelWithFallbacks: invokeModelMock }));
+vi.mock("../src/modules/artifacts/artifacts.service.js", () => ({ createArtifact: artifactMock.create, findArtifact: artifactMock.find, getArtifactBounded: getArtifactBoundedMock }));
+vi.mock("../src/modules/artifacts/artifact-extraction.service.js", () => ({ extractArtifact: extractArtifactMock }));
 
 import { cancelRun, createRun, executeRunTool, failRun, getRun, processRun } from "../src/modules/agent/agent.service.js";
 
@@ -104,6 +109,107 @@ describe("agent run access", () => {
       where: expect.objectContaining({ id: "run-1", status: RunStatus.RUNNING }),
       data: expect.objectContaining({ modelProfile: "local-general", modelReason: expect.stringContaining("completed the model invocation") }),
     }));
+  });
+
+  it("sends a bounded original image with extraction text without persisting its bytes", async () => {
+    const run = {
+      id: "run-vision",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Inspect this image",
+      taskCapability: "vision",
+      modelProfile: "local-vision",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.INTERNAL,
+      sourceArtifactId: "artifact-1",
+      status: RunStatus.PENDING,
+    };
+    const source = {
+      id: "artifact-1",
+      workspaceId: "workspace-1",
+      filename: "drawing.png",
+      mimeType: "image/png",
+      detectedMimeType: "image/png",
+      objectKey: "workspace-1/drawing.png",
+      sizeBytes: 4n,
+    };
+    const selectedProfile = {
+      id: "local-vision",
+      providerId: "local-runtime",
+      location: "local",
+      baseUrl: "http://localhost:11434/v1",
+      modelId: "qwen3.5:4b",
+      capabilities: ["vision"],
+      priority: 1000,
+      enabled: true,
+      sovereign: true,
+      maxOutputTokens: 2048,
+    };
+    const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    artifactMock.find.mockResolvedValue(source);
+    extractArtifactMock.mockResolvedValue({ text: "OCR: valve V-101 is open", metadata: { sourceMimeType: "image/png" } });
+    getArtifactBoundedMock.mockResolvedValue(imageBytes);
+    runToolCallMock.findUnique.mockResolvedValue(null);
+    runToolCallMock.create.mockResolvedValue({});
+    runToolCallMock.update.mockResolvedValue({});
+    runMessageMock.create.mockResolvedValue({});
+    evidenceMock.create.mockResolvedValue({ id: "evidence-1" });
+    artifactMock.create.mockResolvedValue({ id: "deliverable-1", sizeBytes: 1 });
+    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Valve V-101 appears open.", provider: "local-runtime", modelId: "qwen3.5:4b", latencyMs: 10 } });
+
+    await processRun("run-vision");
+
+    expect(getArtifactBoundedMock).toHaveBeenCalledWith(source.objectKey, 10 * 1024 * 1024, expect.any(AbortSignal));
+    expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({
+      classification: DataClassification.INTERNAL,
+      prompt: expect.stringContaining("OCR: valve V-101 is open"),
+      image: { mimeType: "image/png", bytes: imageBytes },
+    }));
+    const persistedCalls = JSON.stringify({ messages: runMessageMock.create.mock.calls, toolCreates: runToolCallMock.create.mock.calls, toolUpdates: runToolCallMock.update.mock.calls });
+    expect(persistedCalls).not.toContain(imageBytes.toString("base64"));
+    expect(persistedCalls).not.toContain('"bytes"');
+    expect(persistedCalls).not.toContain('"type":"Buffer"');
+    expect(persistedCalls).toContain('"mode":"original-image"');
+  });
+
+  it("uses extraction text for PDFs and records that rendered pages are unavailable", async () => {
+    const run = {
+      id: "run-pdf",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Inspect the diagram in this PDF",
+      taskCapability: "vision",
+      modelProfile: "local-vision",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.CONFIDENTIAL,
+      sourceArtifactId: "artifact-pdf",
+      status: RunStatus.PENDING,
+    };
+    const source = { id: "artifact-pdf", workspaceId: "workspace-1", filename: "drawing.pdf", mimeType: "application/pdf", detectedMimeType: "application/pdf", objectKey: "workspace-1/drawing.pdf", sizeBytes: 100n };
+    const selectedProfile = { id: "local-vision", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["vision"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    artifactMock.find.mockResolvedValue(source);
+    extractArtifactMock.mockResolvedValue({ text: "Extracted PDF text", metadata: { sourceMimeType: "application/pdf" } });
+    runToolCallMock.findUnique.mockResolvedValue(null);
+    runToolCallMock.create.mockResolvedValue({});
+    runToolCallMock.update.mockResolvedValue({});
+    runMessageMock.create.mockResolvedValue({});
+    evidenceMock.create.mockResolvedValue({ id: "evidence-1" });
+    artifactMock.create.mockResolvedValue({ id: "deliverable-1", sizeBytes: 1 });
+    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Text-only finding.", provider: "local-runtime", modelId: "qwen3.5:4b", latencyMs: 10 } });
+
+    await processRun("run-pdf");
+
+    expect(getArtifactBoundedMock).not.toHaveBeenCalled();
+    expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({ image: undefined, prompt: expect.stringContaining("PDF page rendering is not implemented") }));
+    const persistedCalls = JSON.stringify(runMessageMock.create.mock.calls);
+    expect(persistedCalls).toContain('"mode":"extraction-text-only"');
+    expect(persistedCalls).toContain('"renderedPages":[]');
   });
 
   it("does not overwrite a cancelled run after worker failure", async () => {

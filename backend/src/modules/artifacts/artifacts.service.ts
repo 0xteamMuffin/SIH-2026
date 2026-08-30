@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { ArtifactExtractionStatus, DataClassification } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
-import { putArtifact, getArtifact } from "../../infrastructure/storage/artifact-store.js";
+import { putArtifact, getArtifact, getArtifactBounded } from "../../infrastructure/storage/artifact-store.js";
 
 export async function createArtifact(input: { workspaceId: string; userId: string; filename: string; mimeType: string; kind: "SOURCE" | "GENERATED_DOCX" | "CODE_OUTPUT"; classification?: DataClassification; detectedMimeType?: string; bytes: Buffer; idempotencyKey?: string }) {
   const key = input.idempotencyKey?.replace(/[^a-zA-Z0-9._-]/g, "_") ?? crypto.randomUUID();
@@ -23,4 +23,4 @@ export async function findArtifact(id: string) {
   return prisma.artifact.findUnique({ where: { id } });
 }
 
-export { getArtifact };
+export { getArtifact, getArtifactBounded };

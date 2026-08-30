@@ -40,6 +40,7 @@ const schema = z.object({
   MODEL_CONFIG_PATH: z.string().min(1).default("config/models.json"),
   ALLOW_REMOTE_INFERENCE: booleanString.default(false),
   MODEL_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(120_000),
+  VISION_MAX_IMAGE_BYTES: z.coerce.number().int().min(1).max(25 * 1024 * 1024).default(10 * 1024 * 1024),
   REMOTE_MODEL_API_KEY: z.string().optional(),
 }).superRefine((value, ctx) => {
   if (value.APP_MODE === "sovereign" && value.ALLOW_REMOTE_INFERENCE) {

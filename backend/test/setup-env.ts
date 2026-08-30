@@ -18,3 +18,4 @@ process.env.AMQP_URL = "amqp://test:test@localhost:5672";
 process.env.APP_MODE = "development";
 process.env.MODEL_CONFIG_PATH = "config/models.json";
 process.env.ALLOW_REMOTE_INFERENCE = "true";
+process.env.VISION_MAX_IMAGE_BYTES = "10485760";

@@ -60,21 +60,26 @@ describe("model fallback orchestration", () => {
   });
 
   it("filters remote profiles before invoking restricted data", async () => {
-    const remote = profile("remote", "remote");
-    const local = profile("local");
+    const remote = { ...profile("remote", "remote"), capabilities: ["vision"] as ModelProfile["capabilities"] };
+    const local = { ...profile("local"), capabilities: ["vision"] as ModelProfile["capabilities"] };
+    const image = { mimeType: "image/jpeg" as const, bytes: Buffer.from([0xff, 0xd8, 0xff]) };
     askModelMock.mockResolvedValue(response);
 
     await invokeModelWithFallbacks({
       runId: "run-1",
-      decision: { capability: "general", profile: remote, fallbacks: [local], reason: "test" },
+      decision: { capability: "vision", profile: remote, fallbacks: [local], reason: "test" },
       classification: DataClassification.CONFIDENTIAL,
       system: "system",
       prompt: "prompt",
+      image,
     });
 
     expect(askModelMock).toHaveBeenCalledOnce();
-    expect(askModelMock).toHaveBeenCalledWith(local, DataClassification.CONFIDENTIAL, "system", "prompt", undefined);
+    expect(askModelMock).toHaveBeenCalledWith(local, DataClassification.CONFIDENTIAL, "system", "prompt", undefined, image);
     expect(modelInvocationMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ profileId: "local", attempt: 1 }) });
+    const telemetryCalls = JSON.stringify({ creates: modelInvocationMock.create.mock.calls, updates: modelInvocationMock.update.mock.calls });
+    expect(telemetryCalls).not.toContain('"image"');
+    expect(telemetryCalls).not.toContain('"type":"Buffer"');
   });
 
   it.each([

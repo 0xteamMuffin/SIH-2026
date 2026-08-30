@@ -7,10 +7,11 @@ import { AppError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { mostRestrictiveClassification } from "../../lib/data-classification.js";
 import { invokeModelWithFallbacks } from "../../infrastructure/models/model-orchestrator.js";
+import { visionImageMimeTypes, type ModelImageInput, type VisionImageMimeType } from "../../infrastructure/models/model-provider.js";
 import { eligibleRoutingDecision, routingDecisionForPersistedRun, selectModel } from "../../infrastructure/models/model-router.js";
 import { runCode } from "../../infrastructure/sandbox/sandbox-client.js";
 import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_REQUESTED_TOPIC } from "../../infrastructure/queue/agent-run-message.js";
-import { createArtifact, findArtifact } from "../artifacts/artifacts.service.js";
+import { createArtifact, findArtifact, getArtifactBounded } from "../artifacts/artifacts.service.js";
 import { extractArtifact } from "../artifacts/artifact-extraction.service.js";
 import { approvalNoteDocx } from "./approval-note.js";
 import { modelMessages } from "./agent-prompts.js";
@@ -21,6 +22,7 @@ const MAX_TURNS = 4;
 const MAX_TOOL_CALLS = 5;
 const MAX_SOURCE_CHARS = 12_000;
 const EXTRACTION_VERSION = "canonical-v1";
+const PDF_VISION_LIMITATION = "PDF page rendering is not implemented. Only deterministic extraction text was supplied; do not claim visual inspection of PDF pages.";
 const toJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 async function appendMessage(runId: string, turn: number, role: string, content: object) { await prisma.runMessage.create({ data: { runId, turn, role, content: toJson(content) } }); }
 export async function executeRunTool(runId: string, name: string, input: object, work: () => Promise<ToolResult>, signal?: AbortSignal) {
@@ -128,7 +130,11 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
     signal.throwIfAborted();
     await appendMessage(run.id, turn, "system", { event: "RUN_STARTED", model: decision.profile.id, capability: decision.capability, maxTurns: MAX_TURNS, maxToolCalls: MAX_TOOL_CALLS });
     await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId: run.id, eventType: "MODEL_ROUTED", metadata: { profile: decision.profile.id, capability: decision.capability, sovereign: decision.profile.sovereign } });
-    const evidence: EvidenceItem[] = []; let sourceText: string | undefined;
+    const evidence: EvidenceItem[] = [];
+    let sourceText: string | undefined;
+    let modelImage: ModelImageInput | undefined;
+    let visionInput: Record<string, unknown> | undefined;
+    let sourceLimitation: string | undefined;
     if (sourceArtifactId) {
       const source = await findArtifact(sourceArtifactId);
       if (!source || source.workspaceId !== run.workspaceId) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
@@ -138,12 +144,29 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
       if (sourceText === undefined) throw new Error("Artifact read completed without source text");
       evidence.push(await saveEvidence(run.id, source.id, `artifact:${source.id}`, source.filename, sourceText.slice(0, 800), sourceText.split(/(?<=[.!?])\s+/).filter(Boolean).slice(0, 8)));
       await appendMessage(run.id, ++turn, "tool", { tool: "artifact.read", result: read });
+      const extractedSource = await findArtifact(source.id);
+      const sourceMimeType = extractedSource?.detectedMimeType ?? source.detectedMimeType ?? source.mimeType;
+      if (decision.capability === "vision" && visionImageMimeTypes.includes(sourceMimeType as VisionImageMimeType)) {
+        if (sourceMimeType === "image/tiff") {
+          throw new AppError(415, "TIFF images require conversion before OpenAI-compatible vision inference; no conversion is currently implemented", "VISION_PROVIDER_MIME_UNSUPPORTED");
+        }
+        const sizeBytes = Number(extractedSource?.sizeBytes ?? source.sizeBytes);
+        if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > env.VISION_MAX_IMAGE_BYTES) {
+          throw new AppError(413, `Image must contain between 1 and ${env.VISION_MAX_IMAGE_BYTES} bytes`, "VISION_IMAGE_TOO_LARGE");
+        }
+        const bytes = await getArtifactBounded(source.objectKey, env.VISION_MAX_IMAGE_BYTES, signal);
+        modelImage = { mimeType: sourceMimeType as VisionImageMimeType, bytes };
+        visionInput = { mode: "original-image", sourceMimeType, sizeBytes: bytes.byteLength };
+      } else if (sourceMimeType === "application/pdf") {
+        sourceLimitation = PDF_VISION_LIMITATION;
+        visionInput = { mode: "extraction-text-only", sourceMimeType, renderedPages: [], limitation: PDF_VISION_LIMITATION };
+      }
     }
     let analysis = "No model analysis was required.";
     let selectedProfile = decision.profile;
-    const messages = modelMessages(run.task, decision.capability, sourceText);
+    const messages = modelMessages(run.task, decision.capability, sourceText, sourceLimitation);
     const analyzed = await executeRunTool(run.id, "model.analyze", { model: decision.profile.id, capability: decision.capability }, async () => {
-      const selected = await invokeModelWithFallbacks({ runId: run.id, decision, classification: run.dataClassification, ...messages, signal });
+      const selected = await invokeModelWithFallbacks({ runId: run.id, decision, classification: run.dataClassification, ...messages, image: modelImage, signal });
       selectedProfile = selected.profile;
       analysis = selected.response.text.trim() || "The model returned no analysis.";
       return { ok: true, summary: "Model analysis completed", data: { characters: analysis.length, analysis, modelProfile: selectedProfile.id } };
@@ -162,6 +185,7 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
     await appendMessage(run.id, ++turn, "tool", { tool: "model.analyze", result: analyzed });
     evidence.push(await saveEvidence(run.id, undefined, "model-analysis", "Model analysis", analysis, [analysis]));
     const result: Record<string, unknown> = { analysis, evidenceIds: evidence.map((item) => item.id), model: selectedProfile.id, capability: decision.capability };
+    if (visionInput) result.visionInput = visionInput;
     if (decision.capability === "code") result.sandbox = await executeRunTool(run.id, "sandbox.execute", { language: "javascript" }, async () => ({ ...(await runCode(sourceArtifactId ? sourceText ?? "" : "console.log('Sandbox verification complete')", "javascript", signal)), ok: true, summary: "Sandbox execution completed" }), signal);
     else if (sourceArtifactId) {
       const delivered = await executeRunTool(run.id, "deliverable.createApprovalNote", { format: "docx" }, async () => { const artifact = await createArtifact({ workspaceId: run.workspaceId, userId: run.requestedBy, filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", kind: "GENERATED_DOCX", classification: run.dataClassification, bytes: Buffer.from(await approvalNoteDocx(run.task, evidence)), idempotencyKey: `run-${run.id}-approval-note` }); result.artifact = artifact; return { ok: true, summary: "Generated approval-note DOCX", data: { artifactId: artifact.id } }; }, signal);

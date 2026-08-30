@@ -2,7 +2,7 @@ import { DataClassification, ModelInvocationStatus } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../lib/errors.js";
 import { allowsExternalInference } from "../../lib/data-classification.js";
-import { askModel, type ModelResponse } from "./model-provider.js";
+import { askModel, type ModelImageInput, type ModelResponse } from "./model-provider.js";
 import type { ModelProfile } from "./model-registry.js";
 import type { RoutingDecision } from "./model-router.js";
 
@@ -38,6 +38,7 @@ export async function invokeModelWithFallbacks(input: {
   classification: DataClassification;
   system: string;
   prompt: string;
+  image?: ModelImageInput;
   signal?: AbortSignal;
 }): Promise<{ profile: ModelProfile; response: ModelResponse }> {
   const candidates = [input.decision.profile, ...input.decision.fallbacks]
@@ -58,7 +59,7 @@ export async function invokeModelWithFallbacks(input: {
     const startedAt = performance.now();
     let response: ModelResponse;
     try {
-      response = await askModel(profile, input.classification, input.system, input.prompt, input.signal);
+      response = await askModel(profile, input.classification, input.system, input.prompt, input.signal, input.image);
     } catch (error) {
       const cancelled = isCancellation(error, input.signal);
       await prisma.modelInvocation.update({
