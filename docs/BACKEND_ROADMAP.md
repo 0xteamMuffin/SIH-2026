@@ -74,7 +74,9 @@ Acceptance gate: every protected resource is tenant-scoped, revoked sessions sto
 Status: pending
 
 - [x] Validate supported file signatures, extensions, MIME types, UTF-8 encoding, and 25 MiB upload size.
-- [ ] Add artifact listing, metadata, versioning, deletion, and retention states.
+- [x] Add workspace-scoped artifact listing and metadata APIs.
+- [ ] Add artifact versioning and retention states.
+- [ ] Add artifact deletion only after `agent_runs.source_artifact_id` has an enforced relation and database/object-storage cleanup has a failure-safe lifecycle; deleting now could leave dangling run references or orphaned objects.
 - [x] Integrate local UTF-8 and internal Docling extraction for PDF, image, DOCX, PPTX, XLSX, CSV, Markdown, and text.
 - [x] Run OCR for PDF/image inputs and preserve Docling's layout-aware Markdown structure.
 - [ ] Persist granular page, table, image, slide, and sheet location metadata for citation assembly.
