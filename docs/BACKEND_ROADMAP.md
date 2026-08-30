@@ -57,7 +57,7 @@ Acceptance gate: queued work survives API restarts, cancellation stops active pr
 
 ## Phase 3: Identity and authorization
 
-Status: pending
+Status: in progress
 
 - [ ] Add refresh sessions, logout, revocation, and disabled-user checks.
 - [ ] Add Admin-managed users and workspace memberships.
@@ -72,11 +72,12 @@ Acceptance gate: every protected resource is tenant-scoped, revoked sessions sto
 
 Status: pending
 
-- [ ] Validate file signatures, extensions, MIME types, sizes, and archive expansion limits.
+- [x] Validate supported file signatures, extensions, MIME types, UTF-8 encoding, and 25 MiB upload size.
 - [ ] Add artifact listing, metadata, versioning, deletion, and retention states.
-- [ ] Integrate layout-aware PDF, image, DOCX, PPTX, XLSX, CSV, and text extraction.
-- [ ] Run OCR for scanned pages and preserve page, table, image, slide, and sheet locations.
-- [ ] Store canonical extracted content and checksums in MinIO.
+- [x] Integrate local UTF-8 and internal Docling extraction for PDF, image, DOCX, PPTX, XLSX, CSV, Markdown, and text.
+- [x] Run OCR for PDF/image inputs and preserve Docling's layout-aware Markdown structure.
+- [ ] Persist granular page, table, image, slide, and sheet location metadata for citation assembly.
+- [x] Store canonical extracted content and checksums in MinIO with retry-safe lifecycle metadata.
 - [ ] Reconcile failed database and object-storage operations.
 
 Acceptance gate: supported fixtures produce bounded structured extraction, unsafe files fail closed, and partial failures leave no untracked objects.

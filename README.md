@@ -12,6 +12,8 @@ Optional development providers and API-key locations are listed in [the remote p
 
 Durable agent processing is defined in [the RabbitMQ job execution design](./docs/JOB_EXECUTION.md).
 
+OCR, structured extraction, and vision responsibilities are defined in [the hybrid document-understanding design](./docs/DOCUMENT_UNDERSTANDING.md).
+
 
 ## Quick start
 

@@ -16,7 +16,7 @@ Remote development inference is **not sovereign**: public or synthetic task data
 2. A source document is uploaded to MinIO. Its metadata is stored in PostgreSQL through Prisma.
 3. The operator starts a task. The router classifies it as document, vision, code, or general and records the chosen model profile and routing reason.
 4. A durable agent run is created. It records messages, tool calls/results, evidence, artifacts, and audit events in PostgreSQL.
-5. The source file is read through the scoped artifact tool. The current scaffold extracts a bounded text preview; binary/scanned files are honestly marked as needing OCR/vision review.
+5. The source file is read through the scoped artifact tool. UTF-8 text formats are extracted locally; PDF, image, and Office formats may use the internal CPU-only Docling service for deterministic text, layout, table, and OCR extraction. Vision models independently handle photographs, handwriting, drawings, and low-confidence pages. Canonical extraction results and checksums are retained for reuse.
 6. The selected provider analyses the source. Development may allow a configured remote endpoint; sovereign mode permits only internal OpenAI-compatible endpoints.
 7. Findings become persisted evidence. The document flow generates an approval-note DOCX with source references, saves it to MinIO, and exposes an authenticated download.
 
@@ -44,6 +44,6 @@ Configure providers, endpoints, model IDs, capabilities, and routing priorities 
 ## Current boundaries
 
 - Qdrant is deployed but knowledge-base ingestion/retrieval is the next module to wire in.
-- OCR and drawing understanding require a configured local OCR/vision pipeline.
+- Docling is an optional deterministic parser rather than the intelligence layer. Worker startup and non-document tasks do not depend on its availability; semantic interpretation of complex visual material uses the selected vision-capable model.
 - The current agent persists bounded orchestrated tools; native local-model tool calling is the next harness enhancement.
 - Ollama is not included in the active Compose stack so no Ollama image is pulled.

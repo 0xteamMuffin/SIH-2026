@@ -10,7 +10,8 @@ import { invokeModelWithFallbacks } from "../../infrastructure/models/model-orch
 import { eligibleRoutingDecision, routingDecisionForPersistedRun, selectModel } from "../../infrastructure/models/model-router.js";
 import { runCode } from "../../infrastructure/sandbox/sandbox-client.js";
 import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_REQUESTED_TOPIC } from "../../infrastructure/queue/agent-run-message.js";
-import { createArtifact, findArtifact, getArtifact } from "../artifacts/artifacts.service.js";
+import { createArtifact, findArtifact } from "../artifacts/artifacts.service.js";
+import { extractArtifact } from "../artifacts/artifact-extraction.service.js";
 import { approvalNoteDocx } from "./approval-note.js";
 import { modelMessages } from "./agent-prompts.js";
 import type { EvidenceItem, ToolResult } from "./agent.types.js";
@@ -18,8 +19,9 @@ import type { AuthUser } from "../../middleware/auth.js";
 
 const MAX_TURNS = 4;
 const MAX_TOOL_CALLS = 5;
+const MAX_SOURCE_CHARS = 12_000;
+const EXTRACTION_VERSION = "canonical-v1";
 const toJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
-function previewText(bytes: Buffer) { return bytes.toString("utf8").replace(/\0/g, "").slice(0, 12_000).trim() || "The source is a binary or scanned file. OCR/vision review is required."; }
 async function appendMessage(runId: string, turn: number, role: string, content: object) { await prisma.runMessage.create({ data: { runId, turn, role, content: toJson(content) } }); }
 export async function executeRunTool(runId: string, name: string, input: object, work: () => Promise<ToolResult>, signal?: AbortSignal) {
   const idempotencyKey = crypto.createHash("sha256").update(`${name}:${JSON.stringify(input)}`).digest("hex");
@@ -130,7 +132,7 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
     if (sourceArtifactId) {
       const source = await findArtifact(sourceArtifactId);
       if (!source || source.workspaceId !== run.workspaceId) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
-      const read = await executeRunTool(run.id, "artifact.read", { artifactId: source.id }, async () => { sourceText = previewText(await getArtifact(source.objectKey)); return { ok: true, summary: `Read ${source.filename}`, data: { characters: sourceText.length, text: sourceText } }; }, signal);
+      const read = await executeRunTool(run.id, "artifact.read", { artifactId: source.id, extractionVersion: EXTRACTION_VERSION }, async () => { const extraction = await extractArtifact(source.id, signal); sourceText = extraction.text.slice(0, MAX_SOURCE_CHARS); return { ok: true, summary: `Extracted ${source.filename}`, data: { characters: sourceText.length, text: sourceText } }; }, signal);
       if (!read.ok) throw new Error(read.summary);
       if (typeof read.data?.text === "string") sourceText = read.data.text;
       if (sourceText === undefined) throw new Error("Artifact read completed without source text");
