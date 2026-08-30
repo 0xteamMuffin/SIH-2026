@@ -12,7 +12,7 @@ import type { EvidenceItem, ToolResult } from "./agent.types.js";
 
 const MAX_TURNS = 4;
 const MAX_TOOL_CALLS = 5;
-const toJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+const toJson = (value: unknown) => JSON.parse(JSON.stringify(value, (_, v) => typeof v === 'bigint' ? Number(v) : v)) as Prisma.InputJsonValue;
 function previewText(bytes: Buffer) { return bytes.toString("utf8").replace(/\0/g, "").slice(0, 12_000).trim() || "The source is a binary or scanned file. OCR/vision review is required."; }
 async function appendMessage(runId: string, turn: number, role: string, content: object) { await prisma.runMessage.create({ data: { runId, turn, role, content: toJson(content) } }); }
 async function executeTool(runId: string, name: string, input: object, work: () => Promise<ToolResult>) {
@@ -34,6 +34,11 @@ async function saveEvidence(runId: string, artifactId: string | undefined, sourc
   return { id: item.id, sourceRef, title, summary, facts };
 }
 export async function createRun(input: { workspaceId: string; userId: string; task: string; artifactId?: string }) {
+  await prisma.agentRun.updateMany({
+    where: { activeWorkspaceId: input.workspaceId },
+    data: { status: RunStatus.CANCELLED, activeWorkspaceId: null, result: toJson({ error: "Preempted by a new run" }), completedAt: new Date() }
+  });
+
   const decision = selectModel(input.task, Boolean(input.artifactId));
   const run = await prisma.agentRun.create({ data: { workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, activeWorkspaceId: input.workspaceId } });
   await audit({ actorId: input.userId, workspaceId: input.workspaceId, runId: run.id, eventType: "AGENT_RUN_CREATED", metadata: { capability: decision.capability, modelProfile: decision.profile.id, sovereign: decision.profile.sovereign } });

@@ -7,6 +7,7 @@ import {
   Background,
   Handle,
   Position,
+  MarkerType,
   type Node,
   type Edge,
 } from "@xyflow/react";
@@ -17,7 +18,7 @@ import type { Run } from "../../lib/api";
 
 function StartNode({ data }: { data: any }) {
   return (
-    <div className="card" style={{ width: 320, padding: "16px", borderRadius: "12px", border: "1px solid var(--line)", background: "var(--surface)" }}>
+    <div className="card node-wrapper" style={{ width: 320, padding: "16px", borderRadius: "12px", border: "1px solid var(--line)", background: "var(--surface)" }}>
       <div className="section-title">Initial Task</div>
       <div style={{ fontSize: 13, color: "var(--ink)", lineHeight: 1.5, wordBreak: "break-word" }}>
         {data.label}
@@ -29,7 +30,7 @@ function StartNode({ data }: { data: any }) {
 
 function AgentNode({ data }: { data: any }) {
   return (
-    <div className="card animated-border" style={{ width: 240, padding: "14px", borderRadius: "12px" }}>
+    <div className="card animated-border node-wrapper" style={{ width: 240, padding: "14px", borderRadius: "12px" }}>
       <Handle type="target" position={Position.Left} style={{ background: "var(--line-strong)", border: "none" }} />
       <div className="section-title" style={{ color: "var(--accent)" }}>Agent Routed</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -50,7 +51,7 @@ function ToolNode({ data }: { data: any }) {
   const bg = isFailed ? "rgba(248, 113, 113, 0.1)" : isRunning ? "rgba(139, 92, 246, 0.1)" : "rgba(74, 222, 128, 0.05)";
 
   return (
-    <div style={{
+    <div className={`node-wrapper ${isRunning ? "node-running" : ""}`} style={{
       background: "var(--inset)",
       border: `1px solid ${borderColor}`,
       borderRadius: "8px",
@@ -74,8 +75,9 @@ function ToolNode({ data }: { data: any }) {
 }
 
 function EndNode({ data }: { data: any }) {
+  const isRunning = data.status === "PENDING" || data.status === "RUNNING";
   return (
-    <div className="card" style={{ width: 200, padding: "16px", borderRadius: "12px", border: "1px solid var(--line)" }}>
+    <div className={`card node-wrapper ${isRunning ? "node-running" : ""}`} style={{ width: 200, padding: "16px", borderRadius: "12px", border: "1px solid var(--line)" }}>
       <Handle type="target" position={Position.Left} style={{ background: "var(--line-strong)", border: "none" }} />
       <div className="section-title">Workflow End</div>
       <div style={{ fontSize: 13, fontWeight: 600, color: data.status === "COMPLETED" ? "var(--green)" : data.status === "FAILED" ? "var(--red)" : "var(--ink-2)" }}>
@@ -129,6 +131,7 @@ export default function RunCanvas({ run }: Props) {
       target: "agent",
       animated: true,
       style: { stroke: "var(--line-strong)", strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "var(--line-strong)" },
     });
     xOffset += 320;
 
@@ -149,7 +152,8 @@ export default function RunCanvas({ run }: Props) {
           source: prevNodeId,
           target: toolId,
           animated: tc.status === "RUNNING",
-          style: { stroke: "var(--line-strong)", strokeWidth: 2 },
+          style: { stroke: tc.status === "RUNNING" ? "var(--accent)" : "var(--line-strong)", strokeWidth: 2 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: tc.status === "RUNNING" ? "var(--accent)" : "var(--line-strong)" },
         });
         
         prevNodeId = toolId;
@@ -169,7 +173,8 @@ export default function RunCanvas({ run }: Props) {
       source: prevNodeId,
       target: "end",
       animated: run.status === "RUNNING",
-      style: { stroke: "var(--line-strong)", strokeWidth: 2 },
+      style: { stroke: run.status === "RUNNING" ? "var(--accent)" : "var(--line-strong)", strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: run.status === "RUNNING" ? "var(--accent)" : "var(--line-strong)" },
     });
 
     return { nodes: nds, edges: eds };
