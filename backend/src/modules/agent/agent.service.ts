@@ -191,7 +191,7 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
   const leaseId = crypto.randomUUID();
   const startedAt = new Date();
   const claimed = await prisma.$transaction(async (transaction) => {
-    await transaction.$queryRaw`SELECT pg_advisory_xact_lock(${EXECUTION_ADMISSION_LOCK_ID})`;
+    await transaction.$queryRaw`SELECT pg_advisory_xact_lock(${EXECUTION_ADMISSION_LOCK_ID})::text`;
     const activeRuns = await transaction.agentRun.count({ where: { status: RunStatus.RUNNING } });
     if (activeRuns >= env.QUEUE_PREFETCH) {
       await transaction.outboxEvent.create({

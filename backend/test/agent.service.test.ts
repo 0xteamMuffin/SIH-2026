@@ -148,6 +148,7 @@ describe("agent run access", () => {
     await expect(processRun(run.id)).resolves.toBeUndefined();
 
     expect(queryRawMock).toHaveBeenCalledOnce();
+    expect(queryRawMock.mock.calls[0]?.[0].join("")).toContain("::text");
     expect(agentRunMock.updateMany).not.toHaveBeenCalled();
     expect(outboxEventMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({
       topic: "agent.run.requested",
