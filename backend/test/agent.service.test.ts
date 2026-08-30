@@ -1,22 +1,38 @@
-import { RunStatus } from "@prisma/client";
+import { DataClassification, RunStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { auditMock, agentRunMock } = vi.hoisted(() => ({
+const { auditMock, agentRunMock, outboxEventMock, transactionMock } = vi.hoisted(() => ({
   auditMock: vi.fn(),
   agentRunMock: {
+    create: vi.fn(),
     findFirst: vi.fn(),
     findUniqueOrThrow: vi.fn(),
     updateMany: vi.fn(),
   },
+  outboxEventMock: { create: vi.fn() },
+  transactionMock: vi.fn(),
 }));
 
-vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock } }));
+vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock, outboxEvent: outboxEventMock, $transaction: transactionMock } }));
 vi.mock("../src/lib/audit.js", () => ({ audit: auditMock }));
 
-import { cancelRun, getRun } from "../src/modules/agent/agent.service.js";
+import { cancelRun, createRun, getRun } from "../src/modules/agent/agent.service.js";
 
 describe("agent run access", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("creates a run and queue outbox event atomically", async () => {
+    const run = { id: "run-1", workspaceId: "workspace-1", status: RunStatus.PENDING };
+    agentRunMock.create.mockResolvedValue(run);
+    outboxEventMock.create.mockResolvedValue({ id: "event-1" });
+    transactionMock.mockResolvedValue([run, { id: "event-1" }]);
+
+    await expect(createRun({ workspaceId: "workspace-1", userId: "user-1", task: "Summarize the public report", dataClassification: DataClassification.PUBLIC })).resolves.toEqual(run);
+
+    expect(transactionMock).toHaveBeenCalledOnce();
+    expect(outboxEventMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ topic: "agent.run.requested", aggregateId: expect.any(String) }) });
+    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ runId: "run-1", eventType: "AGENT_RUN_CREATED" }));
+  });
 
   it("scopes operator reads to workspace membership", async () => {
     agentRunMock.findFirst.mockResolvedValue({ id: "run-1" });

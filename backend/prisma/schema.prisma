@@ -180,3 +180,19 @@ model AuditEvent {
   @@index([workspaceId, createdAt])
   @@map("audit_events")
 }
+
+model OutboxEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  topic       String
+  aggregateId String    @map("aggregate_id") @db.Uuid
+  payload     Json
+  attempts    Int       @default(0)
+  availableAt DateTime  @default(now()) @map("available_at")
+  publishedAt DateTime? @map("published_at")
+  lastError   String?   @map("last_error")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@unique([topic, aggregateId])
+  @@index([publishedAt, availableAt])
+  @@map("outbox_events")
+}

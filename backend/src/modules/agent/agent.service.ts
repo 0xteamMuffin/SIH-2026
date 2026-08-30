@@ -52,9 +52,12 @@ export async function createRun(input: { workspaceId: string; userId: string; ta
     await audit({ actorId: input.userId, workspaceId: input.workspaceId, eventType: "EXTERNAL_INFERENCE_BLOCKED", metadata: { classification, modelProfile: decision.profile.id } });
     throw new AppError(422, "External inference is restricted to public or synthetic data", "EXTERNAL_INFERENCE_BLOCKED");
   }
-  const run = await prisma.agentRun.create({ data: { workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, activeWorkspaceId: input.workspaceId } });
+  const runId = crypto.randomUUID();
+  const [run] = await prisma.$transaction([
+    prisma.agentRun.create({ data: { id: runId, workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, activeWorkspaceId: input.workspaceId } }),
+    prisma.outboxEvent.create({ data: { topic: "agent.run.requested", aggregateId: runId, payload: toJson({ runId, sourceArtifactId: input.artifactId }) } }),
+  ]);
   await audit({ actorId: input.userId, workspaceId: input.workspaceId, runId: run.id, eventType: "AGENT_RUN_CREATED", metadata: { capability: decision.capability, classification, modelProfile: decision.profile.id, sovereign: decision.profile.sovereign } });
-  void processRun(run.id, decision, input.artifactId).catch(() => undefined);
   return run;
 }
 async function processRun(runId: string, decision: RoutingDecision, sourceArtifactId?: string) {
