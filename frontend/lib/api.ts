@@ -45,6 +45,12 @@ export const api = {
 
   getRun: (runId: string) => request<Run>(`/api/runs/${runId}`),
 
+  getWorkspaceArtifacts: (workspaceId: string) =>
+    request<{ artifacts: Artifact[] }>(`/api/workspaces/${workspaceId}/artifacts`),
+
+  getWorkspaceRuns: (workspaceId: string) =>
+    request<{ runs: Run[] }>(`/api/workspaces/${workspaceId}/runs`),
+
   cancelRun: (runId: string) =>
     request<{ run: Run }>(`/api/runs/${runId}/cancel`, { method: "POST" }),
 
