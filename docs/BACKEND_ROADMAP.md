@@ -92,10 +92,12 @@ Status: in progress
 
 - [x] Pin and authenticate Qdrant; add readiness and validated named-vector collection administration.
 - [ ] Add local CPU embedding with pinned model files for offline deployment.
-- [ ] Chunk extracted content while preserving source locations and hierarchy.
-- [ ] Index workspace-private and organization-shared knowledge in Qdrant.
-- [ ] Enforce access-control filters on every retrieval query.
-- [ ] Add optional local reranking and deterministic citation assembly.
+- [x] Chunk extracted content while preserving source locations and hierarchy.
+- [x] Index workspace-private and organization-shared knowledge in Qdrant.
+- [x] Enforce access-control filters on every retrieval query.
+- [x] Provision the active index and execute indexing and query jobs in the backend worker.
+- [ ] Add optional local reranking.
+- [x] Add deterministic citation assembly.
 - [ ] Add re-indexing, deletion, model-version migration, and index reconciliation.
 - [ ] Build a small retrieval evaluation dataset from licensed public or synthetic documents.
 

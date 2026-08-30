@@ -2,7 +2,7 @@
 
 Agent work uses PostgreSQL as the source of truth and RabbitMQ as the delivery transport. RabbitMQ availability must not determine whether an accepted run record is preserved.
 
-Knowledge jobs use the same outbox delivery guarantees but an isolated exchange, queues, channel, prefetch, and retry policy. A knowledge processor starts this consumer by calling `startKnowledgeWorker(processKnowledgeJob, failKnowledgeJob)`; the agent worker does not consume knowledge jobs.
+Knowledge jobs use the same outbox delivery guarantees but an isolated exchange, queues, channel, prefetch, and retry policy. The backend worker provisions the active knowledge index before starting both the agent and knowledge consumers, and drains both consumers during graceful shutdown.
 
 ## Components
 

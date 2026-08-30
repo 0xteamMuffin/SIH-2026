@@ -4,16 +4,21 @@ import { consumeAgentRunCancellations } from "./infrastructure/queue/agent-run-c
 import { runOutboxDispatcher } from "./infrastructure/queue/outbox-dispatcher.js";
 import { recoverStaleRuns, runStaleRunRecovery } from "./infrastructure/queue/run-recovery.js";
 import { closeRabbitMq, rabbitChannel } from "./infrastructure/queue/rabbitmq.js";
+import { startKnowledgeWorker } from "./knowledge-worker.js";
 import { logger } from "./lib/logger.js";
 import { prisma } from "./lib/prisma.js";
 import { failRun, processRun } from "./modules/agent/agent.service.js";
+import { ensureActiveKnowledgeIndex } from "./modules/knowledge/knowledge-index-provisioner.js";
+import { failExhaustedKnowledgeJob, processKnowledgeJob } from "./modules/knowledge/knowledge-job-dispatcher.js";
 
 async function main() {
+  await ensureActiveKnowledgeIndex();
   const channel = await rabbitChannel();
   const startupRecovery = await recoverStaleRuns();
   if (startupRecovery.recovered > 0) logger.warn(startupRecovery, "Recovered stale agent runs at startup");
   const consumer = await consumeAgentRuns(channel, processRun, failRun);
   const cancellationConsumer = await consumeAgentRunCancellations(channel, consumer.abort);
+  const knowledgeConsumer = await startKnowledgeWorker(processKnowledgeJob, failExhaustedKnowledgeJob);
   const dispatcherController = new AbortController();
   const dispatcher = runOutboxDispatcher(dispatcherController.signal);
   const recovery = runStaleRunRecovery(dispatcherController.signal);
@@ -25,9 +30,13 @@ async function main() {
     logger.info({ signal }, "Worker shutting down");
     dispatcherController.abort();
     const graceful = (async () => {
-      await consumer.stop();
-      await cancellationConsumer.stop();
-      await Promise.allSettled([dispatcher, recovery]);
+      await Promise.allSettled([
+        consumer.stop(),
+        cancellationConsumer.stop(),
+        knowledgeConsumer.stop(),
+        dispatcher,
+        recovery,
+      ]);
     })();
     let timeoutHandle: NodeJS.Timeout | undefined;
     let timedOut = false;
@@ -52,7 +61,7 @@ async function main() {
   channel.once("close", () => {
     if (!shuttingDown) void shutdown("RabbitMQ channel closed", 1);
   });
-  logger.info({ prefetch: env.QUEUE_PREFETCH }, "Agent worker started");
+  logger.info({ agentPrefetch: env.QUEUE_PREFETCH, knowledgePrefetch: env.KNOWLEDGE_QUEUE_PREFETCH }, "Worker started");
 }
 
 main().catch(async (error) => {
