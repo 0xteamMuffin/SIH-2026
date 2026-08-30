@@ -15,6 +15,7 @@ import type {
   VectorStoreAdmin,
 } from "../../infrastructure/vector-store/vector-store-admin.js";
 import { prisma } from "../../lib/prisma.js";
+import { env } from "../../config/env.js";
 
 export const KNOWLEDGE_CHUNKER_VERSION = "text-v1";
 export const KNOWLEDGE_PAYLOAD_SCHEMA_VERSION = "v1";
@@ -208,7 +209,7 @@ export async function ensureActiveKnowledgeIndex(
     database: injected.database ?? prisma as unknown as KnowledgeIndexDatabase,
     vectorStore: injected.vectorStore ?? getQdrantVectorStore(),
     resolveEmbeddingProfile: injected.resolveEmbeddingProfile
-      ?? (() => selectEmbeddingProfile(DataClassification.CONFIDENTIAL)),
+      ?? (() => selectEmbeddingProfile(env.APP_MODE === "sovereign" ? DataClassification.CONFIDENTIAL : DataClassification.SYNTHETIC)),
     now: injected.now ?? (() => new Date()),
     chunkerVersion: injected.chunkerVersion ?? KNOWLEDGE_CHUNKER_VERSION,
     payloadSchemaVersion: injected.payloadSchemaVersion ?? KNOWLEDGE_PAYLOAD_SCHEMA_VERSION,

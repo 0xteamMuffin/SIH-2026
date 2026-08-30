@@ -176,6 +176,20 @@
       "modelId": "qwen2.5-coder:7b",
       "capabilities": ["code"],
       "priority": 1000
+    },
+    {
+      "id": "local-text-embedding",
+      "providerId": "local-runtime",
+      "modelId": "nomic-embed-text",
+      "capabilities": ["embedding"],
+      "priority": 1000,
+      "revision": "nomic-embed-text-v1.5",
+      "dimensions": 768,
+      "distance": "cosine",
+      "maxBatchInputs": 32,
+      "maxBatchCharacters": 64000,
+      "maxInputCharacters": 6000,
+      "inputModalities": ["TEXT"]
     }
   ]
 }

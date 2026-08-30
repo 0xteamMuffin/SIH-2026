@@ -127,6 +127,7 @@ describe("model registry", () => {
       { id: "remote-text-embedding", dimensions: 2_048, inputModalities: ["TEXT"], revision: "nvidia/nemotron-3-embed-1b-20260716" },
       { id: "remote-multimodal-embedding", dimensions: 2_048, inputModalities: ["TEXT", "IMAGE"], revision: "nvidia/llama-nemotron-embed-vl-1b-v2-20260224" },
       { id: "cloudflare-embedding", dimensions: 1_024, inputModalities: ["TEXT"], revision: "baai/bge-m3@5617a9f61b028005a4858fdac845db406aefb181" },
+      { id: "local-text-embedding", dimensions: 768, inputModalities: ["TEXT"], revision: "nomic-embed-text-v1.5" },
     ]);
   });
 
