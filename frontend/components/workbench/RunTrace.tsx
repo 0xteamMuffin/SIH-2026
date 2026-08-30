@@ -2,7 +2,7 @@
 
 import type { Run, Artifact } from "../../lib/api";
 import LoadingState from "../ui/LoadingState";
-import WorkflowGraph from "../ui/WorkflowGraph";
+import AgentTrace from "../ui/AgentTrace";
 import StatusBadge from "../ui/StatusBadge";
 import { api } from "../../lib/api";
 
@@ -43,8 +43,8 @@ export default function RunTrace({ run }: Props) {
 
       <div className="divider" style={{ margin: "4px 0" }} />
 
-      {/* Node-based workflow graph */}
-      <WorkflowGraph toolCalls={run.toolCalls ?? []} isRunning={isRunning} />
+      {/* Tool call trace */}
+      <AgentTrace toolCalls={run.toolCalls ?? []} isRunning={isRunning} />
 
       {/* Evidence */}
       {run.evidence && run.evidence.length > 0 && (
