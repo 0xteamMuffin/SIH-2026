@@ -71,6 +71,7 @@ describe("agent run access", () => {
     }) });
     expect(outboxEventMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ topic: "agent.run.requested", aggregateId: expect.any(String), payload: { runId: expect.any(String) } }) });
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ runId: "run-1", eventType: "AGENT_RUN_CREATED" }));
+    expect(queryRawMock.mock.calls[0]?.[0].join("")).toContain("::text");
     expect(queryRawMock.mock.invocationCallOrder[0]).toBeLessThan(agentRunMock.count.mock.invocationCallOrder[0]);
     expect(agentRunMock.count.mock.invocationCallOrder[1]).toBeLessThan(agentRunMock.create.mock.invocationCallOrder[0]);
     expect(transactionMock).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "ReadCommitted" });

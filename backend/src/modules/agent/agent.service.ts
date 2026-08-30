@@ -159,7 +159,7 @@ export async function createRun(input: { workspaceId: string; userId: string; ta
   const runId = crypto.randomUUID();
   const tokenBudget = configuredTokenBudget();
   const run = await prisma.$transaction(async (transaction) => {
-    await transaction.$queryRaw`SELECT pg_advisory_xact_lock(${CREATE_ADMISSION_LOCK_ID})`;
+    await transaction.$queryRaw`SELECT pg_advisory_xact_lock(${CREATE_ADMISSION_LOCK_ID})::text`;
     if (input.artifactId) {
       const available = await transaction.artifact.findFirst({ where: { id: input.artifactId, workspaceId: input.workspaceId, lifecycleStatus: ArtifactLifecycleStatus.ACTIVE }, select: { id: true } });
       if (!available) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
