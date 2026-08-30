@@ -8,11 +8,15 @@ Backend delivery is tracked in [the backend roadmap](./docs/BACKEND_ROADMAP.md).
 
 Inference providers and models are configured through [the vendor-neutral model registry](./docs/MODEL_CONFIGURATION.md).
 
+The backend's versioned OpenAPI 3.1 contract is described in [the API contract guide](./docs/API.md) and served at `GET /openapi.json`.
+
 Optional development providers and API-key locations are listed in [the remote provider setup guide](./docs/REMOTE_PROVIDERS.md).
 
 Durable agent processing is defined in [the RabbitMQ job execution design](./docs/JOB_EXECUTION.md).
 
 OCR, structured extraction, and vision responsibilities are defined in [the hybrid document-understanding design](./docs/DOCUMENT_UNDERSTANDING.md).
+
+Backup, restore, offline image transfer, and recovery checks are documented in [the operations runbook](./docs/OPERATIONS.md).
 
 
 ## Quick start

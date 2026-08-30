@@ -10,6 +10,7 @@
     "start:worker": "node dist/worker.js",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
+    "test:openapi": "vitest run test/openapi.test.ts",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy"
@@ -35,6 +36,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@scalar/openapi-parser": "^0.29.0",
     "@types/amqplib": "^0.10.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
