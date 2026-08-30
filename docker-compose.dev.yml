@@ -1,0 +1,41 @@
+# Local hot-reload override. Bind-mounts source into the containers and runs
+# each service's dev script (tsx watch / next dev) instead of the built output.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Not for sovereign/production use — dev images keep devDependencies and run
+# as root for bind-mount convenience.
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./backend:/app
+      - backend_node_modules:/app/node_modules
+    command: ["sh", "-c", "npx --no-install prisma generate && npx --no-install prisma migrate deploy && npm run dev"]
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./backend:/app
+      - worker_node_modules:/app/node_modules
+    command: ["sh", "-c", "npx --no-install prisma generate && npx --no-install prisma migrate deploy && npm run dev:worker"]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
+    command: ["npm", "run", "dev"]
+
+volumes:
+  backend_node_modules:
+  worker_node_modules:
+  frontend_node_modules:
+  frontend_next:
