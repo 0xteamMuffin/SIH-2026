@@ -70,14 +70,28 @@
       "providerId": "development-remote",
       "modelId": "nvidia/nemotron-3-embed-1b:free",
       "capabilities": ["embedding"],
-      "priority": 10
+      "priority": 10,
+      "revision": "nvidia/nemotron-3-embed-1b-20260716",
+      "dimensions": 2048,
+      "distance": "cosine",
+      "maxBatchInputs": 32,
+      "maxBatchCharacters": 120000,
+      "maxInputCharacters": 120000,
+      "inputModalities": ["TEXT"]
     },
     {
       "id": "remote-multimodal-embedding",
       "providerId": "development-remote",
       "modelId": "nvidia/llama-nemotron-embed-vl-1b-v2:free",
       "capabilities": ["embedding"],
-      "priority": 20
+      "priority": 20,
+      "revision": "nvidia/llama-nemotron-embed-vl-1b-v2-20260224",
+      "dimensions": 2048,
+      "distance": "cosine",
+      "maxBatchInputs": 32,
+      "maxBatchCharacters": 120000,
+      "maxInputCharacters": 120000,
+      "inputModalities": ["TEXT", "IMAGE"]
     },
     {
       "id": "remote-free-fallback",
@@ -133,7 +147,14 @@
       "providerId": "cloudflare",
       "modelId": "@cf/baai/bge-m3",
       "capabilities": ["embedding"],
-      "priority": 500
+      "priority": 500,
+      "revision": "baai/bge-m3@5617a9f61b028005a4858fdac845db406aefb181",
+      "dimensions": 1024,
+      "distance": "cosine",
+      "maxBatchInputs": 32,
+      "maxBatchCharacters": 120000,
+      "maxInputCharacters": 120000,
+      "inputModalities": ["TEXT"]
     },
     {
       "id": "local-general",

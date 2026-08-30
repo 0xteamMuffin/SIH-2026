@@ -1,4 +1,5 @@
 import { DataClassification } from "@prisma/client";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { env } from "../src/config/env.js";
 import { modelProfiles, parseModelConfiguration, type ModelProfile } from "../src/infrastructure/models/model-registry.js";
@@ -39,6 +40,94 @@ describe("model registry", () => {
     });
 
     expect(() => parseModelConfiguration(input)).toThrow("Unknown provider");
+  });
+
+  it("parses required embedding metadata", () => {
+    const [profile] = parseModelConfiguration(JSON.stringify({
+      providers: [{ id: "local", location: "local", baseUrl: "http://localhost:11434/v1" }],
+      models: [{
+        id: "embedding",
+        providerId: "local",
+        modelId: "embedding-v1",
+        capabilities: ["embedding"],
+        revision: "embedding-v1.0.0",
+        dimensions: 1_024,
+        distance: "cosine",
+        maxBatchInputs: 16,
+        maxBatchCharacters: 8_192,
+        maxInputCharacters: 4_096,
+        inputModalities: ["TEXT"],
+      }],
+    }));
+
+    expect(profile).toMatchObject({
+      revision: "embedding-v1.0.0",
+      dimensions: 1_024,
+      distance: "cosine",
+      maxBatchInputs: 16,
+      maxBatchCharacters: 8_192,
+      maxInputCharacters: 4_096,
+      inputModalities: ["TEXT"],
+    });
+  });
+
+  it.each(["revision", "dimensions", "distance", "maxBatchInputs", "maxBatchCharacters", "maxInputCharacters", "inputModalities"] as const)(
+    "requires %s for embedding profiles",
+    (field) => {
+      const model: Record<string, unknown> = {
+        id: "embedding",
+        providerId: "local",
+        modelId: "embedding-v1",
+        capabilities: ["embedding"],
+        revision: "embedding-v1.0.0",
+        dimensions: 1_024,
+        distance: "cosine",
+        maxBatchInputs: 16,
+        maxBatchCharacters: 8_192,
+        maxInputCharacters: 4_096,
+        inputModalities: ["TEXT"],
+      };
+      delete model[field];
+
+      expect(() => parseModelConfiguration(JSON.stringify({
+        providers: [{ id: "local", location: "local", baseUrl: "http://localhost:11434/v1" }],
+        models: [model],
+      }))).toThrow(`Embedding profile requires '${field}'`);
+    },
+  );
+
+  it("validates embedding modalities and character limits", () => {
+    const embedding = {
+      id: "embedding",
+      providerId: "local",
+      modelId: "embedding-v1",
+      capabilities: ["embedding"],
+      revision: "embedding-v1.0.0",
+      dimensions: 1_024,
+      distance: "cosine",
+      maxBatchInputs: 16,
+      maxBatchCharacters: 100,
+      maxInputCharacters: 101,
+      inputModalities: ["TEXT", "TEXT"],
+    };
+    const input = (model: object) => JSON.stringify({
+      providers: [{ id: "local", location: "local", baseUrl: "http://localhost:11434/v1" }],
+      models: [model],
+    });
+
+    expect(() => parseModelConfiguration(input(embedding))).toThrow("Input modalities must be unique");
+    expect(() => parseModelConfiguration(input({ ...embedding, inputModalities: ["TEXT"] }))).toThrow("maxInputCharacters cannot exceed maxBatchCharacters");
+  });
+
+  it("configures the expected embedding vector dimensions and immutable revisions", () => {
+    const configured = parseModelConfiguration(readFileSync(new URL("../config/models.json", import.meta.url), "utf8"));
+    const embeddings = configured.filter((profile) => profile.capabilities.includes("embedding"));
+
+    expect(embeddings.map(({ id, dimensions, inputModalities, revision }) => ({ id, dimensions, inputModalities, revision }))).toEqual([
+      { id: "remote-text-embedding", dimensions: 2_048, inputModalities: ["TEXT"], revision: "nvidia/nemotron-3-embed-1b-20260716" },
+      { id: "remote-multimodal-embedding", dimensions: 2_048, inputModalities: ["TEXT", "IMAGE"], revision: "nvidia/llama-nemotron-embed-vl-1b-v2-20260224" },
+      { id: "cloudflare-embedding", dimensions: 1_024, inputModalities: ["TEXT"], revision: "baai/bge-m3@5617a9f61b028005a4858fdac845db406aefb181" },
+    ]);
   });
 
   it("routes capabilities by deterministic priority with ordered fallbacks", () => {

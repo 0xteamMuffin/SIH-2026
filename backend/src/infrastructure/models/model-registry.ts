@@ -2,11 +2,16 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { env } from "../../config/env.js";
+import type { EmbeddingProfile } from "../embeddings/embedding-provider.js";
 
 export const modelCapabilities = ["general", "document", "vision", "code", "embedding", "reranking"] as const;
 export type ModelCapability = typeof modelCapabilities[number];
 export type TaskCapability = Extract<ModelCapability, "general" | "document" | "vision" | "code">;
 export type ProviderLocation = "local" | "remote";
+export const embeddingInputModalities = ["TEXT", "IMAGE"] as const;
+export type EmbeddingInputModality = typeof embeddingInputModalities[number];
+export const embeddingDistances = ["cosine", "euclid", "dot", "manhattan"] as const;
+export type EmbeddingDistance = typeof embeddingDistances[number];
 
 export type ModelProfile = {
   id: string;
@@ -20,7 +25,22 @@ export type ModelProfile = {
   enabled: boolean;
   sovereign: boolean;
   maxOutputTokens: number;
+  revision?: string;
+  dimensions?: number;
+  distance?: EmbeddingDistance;
+  maxBatchInputs?: number;
+  maxBatchCharacters?: number;
+  maxInputCharacters?: number;
+  inputModalities?: EmbeddingInputModality[];
 };
+
+export type EmbeddingModelProfile = ModelProfile & EmbeddingProfile & {
+  revision: string;
+  distance: EmbeddingDistance;
+  inputModalities: EmbeddingInputModality[];
+};
+
+const positiveSafeInteger = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 
 const providerSchema = z.object({
   id: z.string().min(1).regex(/^[a-z0-9][a-z0-9._-]*$/i),
@@ -38,6 +58,27 @@ const modelSchema = z.object({
   priority: z.number().int().min(0).default(100),
   enabled: z.boolean().default(true),
   maxOutputTokens: z.number().int().min(1).max(32_768).default(2_048),
+  revision: z.string().min(1).optional(),
+  dimensions: positiveSafeInteger.optional(),
+  distance: z.enum(embeddingDistances).optional(),
+  maxBatchInputs: positiveSafeInteger.optional(),
+  maxBatchCharacters: positiveSafeInteger.optional(),
+  maxInputCharacters: positiveSafeInteger.optional(),
+  inputModalities: z.array(z.enum(embeddingInputModalities)).min(1)
+    .refine((modalities) => new Set(modalities).size === modalities.length, "Input modalities must be unique")
+    .optional(),
+}).superRefine((model, context) => {
+  if (!model.capabilities.includes("embedding")) return;
+
+  const requiredFields = ["revision", "dimensions", "distance", "maxBatchInputs", "maxBatchCharacters", "maxInputCharacters", "inputModalities"] as const;
+  for (const field of requiredFields) {
+    if (model[field] === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: `Embedding profile requires '${field}'`, path: [field] });
+    }
+  }
+  if (model.maxInputCharacters !== undefined && model.maxBatchCharacters !== undefined && model.maxInputCharacters > model.maxBatchCharacters) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "maxInputCharacters cannot exceed maxBatchCharacters", path: ["maxInputCharacters"] });
+  }
 });
 
 const configurationSchema = z.object({

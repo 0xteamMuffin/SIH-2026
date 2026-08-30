@@ -27,6 +27,26 @@ Lower priority numbers are selected first. Other matching profiles become ordere
 
 The development registry currently assigns separate free profiles for general documents, deeper reasoning, coding, vision, text embeddings, and multimodal embeddings. Free model availability changes over time, so these entries are configuration rather than application constants.
 
+## Embedding profiles
+
+A profile with the `embedding` capability must also define:
+
+| Field | Purpose |
+| --- | --- |
+| `revision` | Immutable model/weights revision used to identify the vector space. Never reuse a revision after changing weights, preprocessing, dimensions, or distance. |
+| `dimensions` | Exact dense-vector length returned by the provider. |
+| `distance` | Vector comparison function: `cosine`, `euclid`, `dot`, or `manhattan`. |
+| `maxBatchInputs` | Maximum strings sent in one provider request. |
+| `maxBatchCharacters` | Maximum combined characters sent in one provider request. |
+| `maxInputCharacters` | Maximum characters allowed in one string; it cannot exceed `maxBatchCharacters`. |
+| `inputModalities` | Supported inputs, using `TEXT` and/or `IMAGE`. |
+
+The configured character and batch limits are application safety limits and may be lower than provider limits. The current OpenRouter NVIDIA profiles produce 2048-dimensional vectors; Cloudflare BGE-M3 produces 1024-dimensional vectors.
+
+Text embedding selection considers only enabled profiles that declare `TEXT`, applies the data-classification policy, then chooses exactly one profile by ascending priority and profile ID. The selected registry object is compatible with the embedding provider's `EmbeddingProfile` input.
+
+An index is bound to the selected profile's immutable `revision`, `dimensions`, and `distance`. Do not retry or fall back to another embedding profile for writes or queries in that index, even when another profile has the same dimensions. A profile failure must fail the operation; changing vector spaces requires a new index and re-embedding its contents.
+
 ## Remote inference
 
 Remote inference requires all of the following:
