@@ -29,8 +29,52 @@ function FilePreview({ file }: { file: File }) {
   );
 }
 
+// Approve/reject the pending high-risk tool call (currently only sandbox.execute).
+function ApprovalPanel({ run, onDecided }: { run: Run; onDecided: (updated: Run) => void }) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const pending = run.approvals?.find((a) => a.status === "PENDING");
+
+  async function decide(decision: "APPROVED" | "REJECTED") {
+    if (!pending) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await api.decideApproval(pending.id, decision);
+      const { run: updated } = await api.getRun(run.id);
+      onDecided(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to record decision");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!pending) {
+    return <p style={{ fontSize: 13, color: "var(--ink-2)" }}>Waiting on reviewer approval — no pending approval record found; try refreshing.</p>;
+  }
+
+  const input = pending.toolInput as { language?: string; code?: string } | undefined;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <p style={{ fontSize: 13, color: "var(--ink-2)" }}>
+        This run wants to execute <span className="chip">{pending.toolName}</span>
+        {input?.language ? <> as <span className="chip">{input.language}</span></> : null} in the sandbox. Review before approving.
+      </p>
+      {input?.code && (
+        <pre style={{ fontSize: 12, background: "rgba(0,0,0,0.3)", padding: 12, borderRadius: 8, border: "1px solid var(--line)", overflowX: "auto", color: "var(--ink)", margin: 0 }}>{input.code}</pre>
+      )}
+      {error && <p className="error">{error}</p>}
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => decide("APPROVED")} disabled={submitting} className="btn-primary" style={{ padding: "6px 14px", fontSize: 12.5 }}>Approve</button>
+        <button onClick={() => decide("REJECTED")} disabled={submitting} className="btn-danger" style={{ padding: "6px 14px", fontSize: 12.5 }}>Reject</button>
+      </div>
+    </div>
+  );
+}
+
 // The agent's side of a turn — content depends on where the run currently is.
-function AssistantMessage({ run, onViewTrace, isViewing }: { run: Run; onViewTrace: () => void; isViewing: boolean }) {
+function AssistantMessage({ run, onViewTrace, isViewing, onDecided }: { run: Run; onViewTrace: () => void; isViewing: boolean; onDecided: (updated: Run) => void }) {
   const busy = run.status === "PENDING" || run.status === "RUNNING";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start", maxWidth: 640 }}>
@@ -46,9 +90,7 @@ function AssistantMessage({ run, onViewTrace, isViewing }: { run: Run; onViewTra
             {run.status === "PENDING" ? "Queued…" : "Working…"}
           </div>
         )}
-        {run.status === "WAITING_APPROVAL" && (
-          <p style={{ fontSize: 13, color: "var(--ink-2)" }}>Waiting on reviewer approval before continuing.</p>
-        )}
+        {run.status === "WAITING_APPROVAL" && <ApprovalPanel run={run} onDecided={onDecided} />}
         {run.status === "FAILED" && (
           <p style={{ fontSize: 13, color: "var(--red)" }}>The run failed. Open the trace on the right for details.</p>
         )}
@@ -191,6 +233,14 @@ export default function WorkbenchPage() {
     api.getRun(r.id).then(({ run: selectedRun }) => setViewingRun(selectedRun)).catch(err => setError(err instanceof Error ? err.message : "Failed to load run"));
   }
 
+  // After an approve/reject decision, apply the refetched run to whichever
+  // state slot is currently holding it (the live-polled run or a viewed one).
+  function handleDecided(updated: Run) {
+    if (run?.id === updated.id) setRun(updated);
+    if (viewingRun?.id === updated.id) setViewingRun(updated);
+    refreshHistory();
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!selectedWs || !task.trim()) return;
@@ -301,7 +351,7 @@ export default function WorkbenchPage() {
                     </div>
                   </div>
                   {/* Agent turn */}
-                  <AssistantMessage run={r} onViewTrace={() => viewTrace(r)} isViewing={displayRun?.id === r.id} />
+                  <AssistantMessage run={r} onViewTrace={() => viewTrace(r)} isViewing={displayRun?.id === r.id} onDecided={handleDecided} />
                 </div>
               ))}
               <div ref={threadEndRef} />

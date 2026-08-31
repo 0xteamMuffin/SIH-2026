@@ -200,6 +200,12 @@ export const api = {
     request<{ user: AdminUser }>(`/api/auth/users/${userId}/disable`, { method: "POST" }),
 
   getModelProviderStatus: () => request<ModelProviderStatusResult>("/api/admin/model-providers/status"),
+
+  decideApproval: (approvalId: string, decision: "APPROVED" | "REJECTED", note?: string) =>
+    request<{ approval: ToolApproval }>(`/api/agent-approvals/${approvalId}/decision`, {
+      method: "POST",
+      body: JSON.stringify(note ? { decision, note } : { decision }),
+    }),
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -303,6 +309,18 @@ export interface Evidence {
   facts: string[];
 }
 
+export interface ToolApproval {
+  id: string;
+  runId: string;
+  toolName: string;
+  toolInput: unknown;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH";
+  status: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+  requestedAt: string;
+  decidedAt?: string;
+  decisionNote?: string;
+}
+
 export interface Run {
   id: string;
   status: "PENDING" | "RUNNING" | "WAITING_APPROVAL" | "COMPLETED" | "FAILED" | "CANCELLED";
@@ -313,6 +331,7 @@ export interface Run {
   modelReason: string;
   toolCalls?: ToolCall[];
   evidence?: Evidence[];
+  approvals?: ToolApproval[];
   result?: {
     analysis?: string;
     artifact?: Artifact;
