@@ -6,7 +6,7 @@ import { prisma } from "./lib/prisma.js";
 
 async function main() {
   const passwordHash = await bcrypt.hash(env.SEED_ADMIN_PASSWORD, 12);
-  await prisma.user.upsert({ where: { email: env.SEED_ADMIN_EMAIL.toLowerCase() }, update: {}, create: { email: env.SEED_ADMIN_EMAIL.toLowerCase(), passwordHash, role: "ADMIN" } });
+  await prisma.user.upsert({ where: { email: env.SEED_ADMIN_EMAIL.toLowerCase() }, update: { passwordHash, role: "ADMIN" }, create: { email: env.SEED_ADMIN_EMAIL.toLowerCase(), passwordHash, role: "ADMIN" } });
   const server = app.listen(env.API_PORT, () => logger.info({ port: env.API_PORT, mode: env.APP_MODE }, "SIH-2026 API listening"));
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
