@@ -10,7 +10,8 @@ import { BrowserPane } from "../../src/main/services/browser-pane.js";
 import { ChatService } from "../../src/main/services/chat-service.js";
 import { ChatStore } from "../../src/main/services/chat-store.js";
 import { DocumentLibrary } from "../../src/main/services/document-library.js";
-import { ScriptedAgentGateway } from "../../src/main/services/scripted-agent.js";
+import { SessionManager } from "../../src/main/services/session.js";
+import type { AgentGateway } from "../../src/main/services/agent-gateway.js";
 import { buildCsv, buildDocx, buildPdf, buildPng, buildXlsx } from "../fixtures.js";
 
 /**
@@ -34,6 +35,14 @@ import { buildCsv, buildDocx, buildPdf, buildPng, buildXlsx } from "../fixtures.
  * module's own location.
  */
 const IDE_ROOT = requireEnv("WORKBENCH_IDE_ROOT");
+
+/**
+ * The workbench has no offline mode — it gates on a backend connection — so
+ * this suite signs in before it can reach the thread it needs to drive.
+ */
+const BACKEND_URL = process.env["WORKBENCH_BACKEND_URL"] ?? "http://localhost:4000";
+const ADMIN_EMAIL = process.env["SEED_ADMIN_EMAIL"] ?? "admin@sih.local";
+const ADMIN_PASSWORD = process.env["SEED_ADMIN_PASSWORD"] ?? "";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -85,10 +94,14 @@ async function run(): Promise<void> {
 
   const events = new EventBroadcaster();
   const store = await ChatStore.open(directory);
-  const chats = new ChatService(store, new ScriptedAgentGateway(), events);
+  // This suite exercises document rendering, not the agent, so the gateway is
+  // a no-op: the user's own message carries the attachments being previewed.
+  const idleAgent: AgentGateway = { runTurn: async ({ publish }) => publish([]) };
+  const chats = new ChatService(store, idleAgent, events);
   const documents = new DocumentLibrary();
+  const session = new SessionManager(events);
   const pane = new BrowserPane(events);
-  registerIpcHandlers({ chats, documents, browserPane: pane });
+  registerIpcHandlers({ chats, documents, session, browserPane: pane });
 
   const window = new BrowserWindow({
     width: 1400,
@@ -103,6 +116,14 @@ async function run(): Promise<void> {
   });
   events.setTarget(window.webContents);
   pane.attach(window);
+
+  const connected = await session.connect(BACKEND_URL, ADMIN_EMAIL, ADMIN_PASSWORD);
+  if (connected.status !== "connected") {
+    console.error(`\nCannot reach the backend at ${BACKEND_URL}: ${connected.error ?? "unknown error"}`);
+    console.error("Start the stack and set SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD, then retry.\n");
+    failures += 1;
+    return;
+  }
 
   const cspViolations: string[] = [];
   window.webContents.on("console-message", (event) => {
@@ -144,8 +165,9 @@ async function run(): Promise<void> {
   );
   check("document cards rendered in thread", cardCount >= paths.length, `cards=${cardCount}`);
 
+  // `Save` shares the button class, so match on the label.
   const toggles = await evaluate<number>(
-    `document.querySelectorAll('.document-card__toggle').length`,
+    `[...document.querySelectorAll('.document-card__toggle')].filter(b => b.textContent === 'Preview').length`,
   );
   check("every fixture offers a preview", toggles === paths.length, `toggles=${toggles}`);
 

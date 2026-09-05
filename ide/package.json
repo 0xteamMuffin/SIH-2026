@@ -15,6 +15,7 @@
     "demo:docs": "node scripts/make-demo-docs.mjs"
   },
   "dependencies": {
+    "@xyflow/react": "^12.11.6",
     "diff": "^9.0.0",
     "docx-preview": "^0.4.0",
     "exceljs": "^4.4.0",

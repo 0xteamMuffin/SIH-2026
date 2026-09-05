@@ -4,8 +4,10 @@ import remarkGfm from "remark-gfm";
 import type { MessageBlock, PreviewCapabilities, StatusBlock } from "@shared/types.js";
 import { isTerminalRunState } from "@shared/types.js";
 
+import { ApprovalView } from "./ApprovalView.js";
 import { DiffView } from "./DiffView.js";
 import { DocumentCard } from "./DocumentCard.js";
+import { ToolCallView } from "./ToolCallView.js";
 
 export interface MessageBlocksProps {
   blocks: MessageBlock[];
@@ -53,6 +55,12 @@ function BlockView({
 
     case "status":
       return <StatusLine block={block} />;
+
+    case "tool":
+      return <ToolCallView block={block} />;
+
+    case "approval":
+      return <ApprovalView block={block} />;
 
     case "diff":
       return <DiffView patch={block.patch} />;

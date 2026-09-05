@@ -42,6 +42,8 @@ export function isTerminalRunState(state: RunState): boolean {
 export type MessageBlock =
   | TextBlock
   | StatusBlock
+  | ToolCallBlock
+  | ApprovalBlock
   | DiffBlock
   | DocumentBlock
   | BrowserBlock;
@@ -60,6 +62,34 @@ export interface StatusBlock {
   state: RunState;
   label: string;
   detail?: string;
+}
+
+/**
+ * A tool the agent invoked. Rendered as a compact step in the thread so the
+ * user can see what the agent actually did, not just what it concluded.
+ */
+export interface ToolCallBlock {
+  kind: "tool";
+  toolName: string;
+  state: ToolCallState;
+  /** Human-readable summary of the call or its result. */
+  summary: string;
+}
+
+export type ToolCallState = "running" | "completed" | "failed" | "rejected" | "awaiting-approval";
+
+/**
+ * A high-risk tool waiting on a human decision. The run is suspended until
+ * one is given, so this block is interactive rather than informational.
+ */
+export interface ApprovalBlock {
+  kind: "approval";
+  approvalId: string;
+  toolName: string;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH";
+  /** The exact arguments the tool would run with, for review before approving. */
+  input: unknown;
+  status: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
 }
 
 /** A single file's change, rendered as a red/green unified diff. */
@@ -90,6 +120,8 @@ export interface Message {
   /** ISO-8601 UTC. */
   createdAt: string;
   blocks: MessageBlock[];
+  /** Execution detail for an agent turn, shown in the trace panel. */
+  trace?: RunTrace;
 }
 
 /**
@@ -275,4 +307,97 @@ export const CLOSED_BROWSER_PANE: BrowserPaneState = {
   isLoading: false,
   canGoBack: false,
   canGoForward: false,
+};
+
+// ─── Run trace ───────────────────────────────────────────────────────────────
+//
+// The thread shows what the agent produced. The trace shows how it got there:
+// which model was routed to and why, every tool call with its arguments and
+// result, and where the run ended. Kept beside a message rather than inside
+// its blocks, because it is inspection detail rather than conversation.
+
+export interface TraceToolCall {
+  toolName: string;
+  state: ToolCallState;
+  summary: string;
+  /** Arguments the tool was called with, as recorded by the backend. */
+  input?: unknown;
+  output?: unknown;
+}
+
+export interface RunTrace {
+  runId: string;
+  task: string;
+  status: RunState;
+  /** Model profile that ran, and the router's reason for choosing it. */
+  modelProfile: string;
+  modelReason: string;
+  capability: string;
+  toolCalls: TraceToolCall[];
+  /** Terminal outcome, once the run has one. */
+  result?: {
+    analysis?: string;
+    artifactFilename?: string;
+    error?: string;
+  };
+}
+
+// ─── Backend session ─────────────────────────────────────────────────────────
+
+/**
+ * How the run's data may be handled. Mirrors the backend enum: INTERNAL and
+ * CONFIDENTIAL force a local model, so the choice is a policy decision the
+ * user makes per message rather than a hidden default.
+ */
+export type DataClassification = "PUBLIC" | "SYNTHETIC" | "INTERNAL" | "CONFIDENTIAL";
+
+export const DATA_CLASSIFICATIONS: readonly DataClassification[] = [
+  "SYNTHETIC",
+  "PUBLIC",
+  "INTERNAL",
+  "CONFIDENTIAL",
+];
+
+export interface SessionUser {
+  id: string;
+  email: string;
+  role: string;
+}
+
+export interface WorkspaceSummary {
+  id: string;
+  name: string;
+}
+
+/**
+ * Connection to the on-premise backend.
+ *
+ * The access token never appears here: it is held in the main process and
+ * never crosses to the renderer.
+ */
+export interface SessionState {
+  status: "disconnected" | "connecting" | "connected";
+  baseUrl: string;
+  user?: SessionUser;
+  workspace?: WorkspaceSummary;
+  workspaces: WorkspaceSummary[];
+  /** Present when the last connection attempt failed. */
+  error?: string;
+  /**
+   * Sign-in values to prefill during development. Absent in packaged builds,
+   * so a release always opens on an empty form.
+   */
+  prefill?: SignInPrefill;
+}
+
+export interface SignInPrefill {
+  baseUrl: string;
+  email: string;
+  password: string;
+}
+
+export const DISCONNECTED_SESSION: SessionState = {
+  status: "disconnected",
+  baseUrl: "",
+  workspaces: [],
 };

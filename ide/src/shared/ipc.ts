@@ -17,10 +17,12 @@ import type {
   Chat,
   ChatId,
   ChatSummary,
+  DataClassification,
   DocumentRef,
   Message,
   MessageId,
   PreviewCapabilities,
+  SessionState,
   SpreadsheetModel,
   ViewBounds,
 } from "./types.js";
@@ -33,13 +35,32 @@ export type IpcContract = {
   "chat:delete": { request: ChatId; response: void };
   /** Appends the user's turn and starts the agent. Resolves with the user message. */
   "chat:send": {
-    request: { chatId: ChatId; prompt: string; attachments?: DocumentRef[] };
+    request: {
+      chatId: ChatId;
+      prompt: string;
+      attachments?: DocumentRef[];
+      classification?: DataClassification;
+    };
     response: Message;
   };
   /** Requests cancellation of the in-flight agent turn, if any. */
   "chat:cancel": { request: ChatId; response: void };
 
   "preview:capabilities": { request: void; response: PreviewCapabilities };
+
+  "session:state": { request: void; response: SessionState };
+  "session:connect": {
+    request: { baseUrl: string; email: string; password: string };
+    response: SessionState;
+  };
+  "session:disconnect": { request: void; response: SessionState };
+  "session:select-workspace": { request: string; response: SessionState };
+
+  /** Approves or rejects a high-risk tool the backend is waiting on. */
+  "approval:decide": {
+    request: { approvalId: string; decision: "APPROVED" | "REJECTED" };
+    response: void;
+  };
 
   /** Opens a native file picker. Resolves to `[]` if the user cancels. */
   "document:pick": { request: void; response: DocumentRef[] };
@@ -53,6 +74,12 @@ export type IpcContract = {
   "document:read": { request: string; response: ArrayBuffer };
   /** Parsed workbook (XLSX or CSV) for a registered document. */
   "document:read-spreadsheet": { request: string; response: SpreadsheetModel };
+  /**
+   * Writes a document to a location the user chooses.
+   *
+   * Resolves to the saved path, or `null` if the save dialog was cancelled.
+   */
+  "document:save": { request: { documentId: string; filename: string }; response: string | null };
 
   /** Opens (or re-navigates) the embedded pane and shows it at `bounds`. */
   "browser:open": { request: { url: string; bounds: ViewBounds }; response: BrowserPaneState };
@@ -81,6 +108,8 @@ export type MainEvent =
   /** An existing message's blocks were replaced — how streaming lands. */
   | { type: "chat/message-updated"; chatId: ChatId; messageId: MessageId; message: Message }
   /** An embedded browser pane changed navigation state. */
-  | { type: "browser/state-changed"; state: BrowserPaneState };
+  | { type: "browser/state-changed"; state: BrowserPaneState }
+  /** The backend connection changed. */
+  | { type: "session/changed"; state: SessionState };
 
 export type MainEventType = MainEvent["type"];

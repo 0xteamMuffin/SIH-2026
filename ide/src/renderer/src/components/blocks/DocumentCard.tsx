@@ -36,6 +36,20 @@ export interface DocumentCardProps {
  */
 export function DocumentCard({ document, capabilities }: DocumentCardProps): React.JSX.Element {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  function save(): void {
+    setSaveState("saving");
+    setSaveError(null);
+    window.workbench.documents
+      .save(document.id, document.filename)
+      .then((path) => setSaveState(path ? "saved" : "idle"))
+      .catch((cause: unknown) => {
+        setSaveState("idle");
+        setSaveError(cause instanceof Error ? cause.message : String(cause));
+      });
+  }
 
   const capability = capabilities?.[document.kind];
   const Viewer = viewerFor(document.kind);
@@ -55,16 +69,26 @@ export function DocumentCard({ document, capabilities }: DocumentCardProps): Rea
           </span>
         </span>
 
-        {canPreview && (
+        <span className="document-card__actions">
+          {canPreview && (
+            <button
+              type="button"
+              className="document-card__toggle"
+              onClick={() => setIsExpanded((expanded) => !expanded)}
+              aria-expanded={isExpanded}
+            >
+              {isExpanded ? "Hide" : "Preview"}
+            </button>
+          )}
           <button
             type="button"
             className="document-card__toggle"
-            onClick={() => setIsExpanded((expanded) => !expanded)}
-            aria-expanded={isExpanded}
+            onClick={save}
+            disabled={saveState === "saving"}
           >
-            {isExpanded ? "Hide" : "Preview"}
+            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Save"}
           </button>
-        )}
+        </span>
       </div>
 
       {canPreview && isExpanded && Viewer && (
@@ -72,6 +96,8 @@ export function DocumentCard({ document, capabilities }: DocumentCardProps): Rea
           <Viewer document={document} />
         </div>
       )}
+
+      {saveError && <p className="document-card__unavailable">{saveError}</p>}
 
       {!canPreview && (
         <p className="document-card__unavailable">

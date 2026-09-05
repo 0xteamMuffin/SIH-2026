@@ -4,9 +4,11 @@ import type {
   Chat,
   ChatId,
   ChatSummary,
+  DataClassification,
   DocumentRef,
   Message,
   MessageBlock,
+  RunTrace,
 } from "@shared/types.js";
 
 import type { EventBroadcaster } from "../events.js";
@@ -65,7 +67,12 @@ export class ChatService {
    * runs the agent in the background. Any turn already running on this chat is
    * cancelled first — a new prompt supersedes the old one.
    */
-  send(chatId: ChatId, prompt: string, attachments: DocumentRef[] = []): Message {
+  send(
+    chatId: ChatId,
+    prompt: string,
+    attachments: DocumentRef[] = [],
+    classification: DataClassification = "SYNTHETIC",
+  ): Message {
     const trimmed = prompt.trim();
     if (!trimmed) throw new Error("Cannot send an empty prompt");
 
@@ -87,16 +94,23 @@ export class ChatService {
     this.#events.emit({ type: "chat/message-appended", chatId, message: userMessage });
     this.#emitListChanged();
 
-    void this.#runAgentTurn(chatId, trimmed);
+    void this.#runAgentTurn(chatId, trimmed, attachments, classification);
     return userMessage;
   }
 
-  /** Aborts the in-flight turn for a chat, if there is one. */
+  /**
+   * Aborts the in-flight turn for a chat.
+   *
+   * Aborting locally only stops this client from waiting; the backend run
+   * keeps going and keeps consuming a model budget, so the gateway is also
+   * asked to cancel it server-side.
+   */
   cancel(chatId: ChatId): void {
     const controller = this.#inFlight.get(chatId);
     if (!controller) return;
     this.#inFlight.delete(chatId);
     controller.abort();
+    void this.#agent.cancel?.(chatId);
   }
 
   /** Aborts every in-flight turn. Call on quit. */
@@ -104,7 +118,12 @@ export class ChatService {
     for (const chatId of [...this.#inFlight.keys()]) this.cancel(chatId);
   }
 
-  async #runAgentTurn(chatId: ChatId, prompt: string): Promise<void> {
+  async #runAgentTurn(
+    chatId: ChatId,
+    prompt: string,
+    attachments: DocumentRef[],
+    classification: DataClassification,
+  ): Promise<void> {
     const controller = new AbortController();
     this.#inFlight.set(chatId, controller);
 
@@ -119,8 +138,8 @@ export class ChatService {
     });
     this.#events.emit({ type: "chat/message-appended", chatId, message: reply });
 
-    const publish = (blocks: MessageBlock[]): void => {
-      const updated = this.#store.replaceBlocks(chatId, reply.id, blocks);
+    const publish = (blocks: MessageBlock[], trace?: RunTrace): void => {
+      const updated = this.#store.replaceContent(chatId, reply.id, blocks, trace);
       if (!updated) return; // Chat was deleted mid-turn.
       this.#events.emit({
         type: "chat/message-updated",
@@ -131,7 +150,7 @@ export class ChatService {
     };
 
     try {
-      await this.#agent.runTurn({ chatId, prompt, signal: controller.signal, publish });
+      await this.#agent.runTurn({ chatId, prompt, attachments, classification, signal: controller.signal, publish });
     } catch (error) {
       if (!controller.signal.aborted) {
         console.error("[chat-service] agent turn failed", error);

@@ -36,6 +36,8 @@ await build({
 });
 
 const electronBinary = join(root, "node_modules/.bin/electron");
+// The app requires a backend connection before it renders anything, so the
+// suite needs credentials. They come from the repo's .env by default.
 const child = spawn(electronBinary, [bundlePath], {
   stdio: "inherit",
   cwd: root,

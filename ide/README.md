@@ -12,14 +12,13 @@ renders the results: prose, red/green diffs, document previews, and web pages.
 
 ## Status
 
-The UI shell, the IPC contract, the diff renderer, document previews, and the
-embedded browser are built and working. One piece is deliberately stubbed:
+Connected to the on-premise backend and running real work: sign-in, real model
+runs, live tool steps, human approval of high-risk tools, and inline previews
+of both attached and agent-generated documents.
 
-| Area | State | Where |
-| --- | --- | --- |
-| Agent execution | `ScriptedAgentGateway` replays canned turns; no model, no network | `src/main/services/scripted-agent.ts` |
-
-It sits behind an interface, so replacing it touches nothing else. See
+The backend's agent is still a fixed pipeline rather than a planning loop, so a
+turn gathers context, analyses, and produces a deliverable — it does not yet
+iterate. See
 [docs/DOCUMENT_PREVIEW.md](./docs/DOCUMENT_PREVIEW.md) for the viewer stack and
 [docs/BROWSER_PANE.md](./docs/BROWSER_PANE.md) for how the embedded browser
 works and what agentic browsing will need from it.
@@ -35,6 +34,31 @@ npm run test:e2e   # drives the built renderer in Electron (needs a display)
 npm run typecheck  # both tsconfig projects
 npm run demo:docs  # generate sample documents to try the previews on
 ```
+
+### Connecting
+
+The workbench has no offline mode: every answer comes from the backend, so the
+app opens on a sign-in screen. Start the stack from the repository root, then
+sign in with the seeded admin credentials from `.env`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+The dev override publishes the API on `http://localhost:4000` and puts the
+backend on the `edge` network, because the Electron client runs on the host
+rather than inside the compose network. The sovereign stack does neither — it
+publishes nothing and keeps the backend on the closed `internal` network.
+
+Credentials go straight to the main process and are never persisted, so a
+restart requires signing in again.
+
+In development the form arrives prefilled: main reads `SEED_ADMIN_EMAIL` and
+`SEED_ADMIN_PASSWORD` from the repository's `.env`, so connecting is one click.
+Override with `WORKBENCH_EMAIL`, `WORKBENCH_PASSWORD`, and
+`WORKBENCH_BACKEND_URL`. Nothing is hardcoded and a packaged build
+(`app.isPackaged`) never receives these, so a release always opens on an empty
+form.
 
 ### Trying the previews
 
@@ -83,7 +107,14 @@ An agent turn is an ordered list of `MessageBlock`s, because one answer can mix
 prose, a diff, a spreadsheet, and a browser session:
 
 ```ts
-type MessageBlock = TextBlock | StatusBlock | DiffBlock | DocumentBlock | BrowserBlock;
+type MessageBlock =
+  | TextBlock      // prose, rendered as markdown
+  | StatusBlock    // the turn's lifecycle
+  | ToolCallBlock  // a step the agent took
+  | ApprovalBlock  // a high-risk tool waiting on a human
+  | DiffBlock      // red/green file change
+  | DocumentBlock  // inline preview
+  | BrowserBlock;  // embedded page
 ```
 
 Rendering is a pure function of that list. Adding a capability is additive: add
@@ -99,6 +130,35 @@ Reads are capped at 25 MB.
 
 Attach files with the **+** button in the composer. PDF, XLSX, CSV, DOCX,
 images, and text render inline.
+
+### Runs are inspectable, not just observable
+
+The thread shows what the agent produced. The trace shows how it got there: the
+prompt, which model was routed to and the router's stated reason, every tool
+call in order, and the outcome. Clicking a node opens its full detail — a
+tool's exact arguments and raw result, or the routing rationale.
+
+It opens on its own when a turn starts and follows the run live, because
+showing the work only helps if it is in front of you. **Hide** closes it, and a
+**View trace** button on the turn brings it back. Hiding is remembered for that
+run, so a poll cannot reopen what was just dismissed; the next turn opens
+fresh.
+
+That detail is carried on the message as a `RunTrace`, deliberately beside the
+blocks rather than inside them: it is inspection data, not conversation, and
+the thread stays readable without it.
+
+The trace and the embedded browser share the right column and are mutually
+exclusive, because the browser is a native view that paints over any DOM
+beneath it.
+
+### The renderer never holds a credential
+
+Access and refresh tokens live in the main process. The renderer receives only
+`SessionState` — who is connected and where — and asks for outcomes ("start
+this run"), never constructing a request itself. Silent token refresh on a 401
+happens in main too, so a long run does not drop when the short-lived access
+token expires.
 
 ### Diffs are rendered, never computed
 
@@ -148,6 +208,9 @@ Entries also match subdomains. Non-http(s) schemes are always refused.
 | Window + dev log forwarding | `src/main/window.ts` |
 | App-shell hardening | `src/main/security.ts` |
 | Chat orchestration | `src/main/services/chat-service.ts` |
+| Backend HTTP client | `src/main/services/backend-client.ts` |
+| Connection + tokens | `src/main/services/session.ts` |
+| Run → blocks projection | `src/main/services/backend-agent.ts` |
 | Chat persistence (JSON in userData) | `src/main/services/chat-store.ts` |
 | Agent seam | `src/main/services/agent-gateway.ts` |
 | Diff construction | `src/main/services/diff.ts` |
@@ -158,16 +221,16 @@ Entries also match subdomains. Non-http(s) schemes are always refused.
 | Viewer registry | `src/renderer/src/components/preview/registry.ts` |
 | IPC contract | `src/shared/ipc.ts`, `src/shared/types.ts`, `src/shared/api.ts` |
 | Diff rendering | `src/renderer/src/components/blocks/DiffView.tsx` |
+| Run trace graph | `src/renderer/src/components/trace/` |
 | Browser pane seam | `src/renderer/src/hooks/useBrowserPane.ts` |
 
 ## Next steps
 
-1. Replace `ScriptedAgentGateway` with an HTTP client against the backend's run
-   API, translating streamed tool calls and artifacts into blocks.
-2. Fetch `artifact`-sourced documents from the backend's object storage, so
-   agent-produced files preview the same way attached ones do.
-3. A human-in-the-loop approval panel for the backend's `WAITING_APPROVAL`
-   gate — `awaiting-approval` exists in `RunState` but has no UI.
-4. Authentication — reuse the backend's JWT flow and hold the token in main,
-   never in the renderer.
-5. Agentic browsing, on top of the `webContents` the pane already owns.
+1. The backend's agent loop — replacing the fixed `SOURCE → ANALYZE` pipeline
+   with tool-calling iteration, so a turn can plan and revise rather than
+   answering once.
+2. Streaming instead of polling. The gateway re-reads the run every 1.2s; a
+   server-sent event stream would remove the latency and the wasted requests.
+3. Multiple attachments per run. The run API takes one source artifact, so the
+   rest are uploaded to the workspace but not handed to the turn.
+4. Agentic browsing, on top of the `webContents` the pane already owns.

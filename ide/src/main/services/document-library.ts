@@ -143,6 +143,11 @@ export class DocumentLibrary {
     return readFile(path);
   }
 
+  /** Whether this id was issued locally, as opposed to being a backend artifact. */
+  has(documentId: string): boolean {
+    return this.#paths.has(documentId);
+  }
+
   /** Path for a registered document, for parsers that stream from disk. */
   pathFor(documentId: string): string {
     const path = this.#paths.get(documentId);

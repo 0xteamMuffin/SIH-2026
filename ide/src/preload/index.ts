@@ -33,9 +33,25 @@ const api: WorkbenchApi = {
     get: (chatId) => invoke("chat:get", chatId),
     rename: (chatId, title) => invoke("chat:rename", { chatId, title }),
     remove: (chatId) => invoke("chat:delete", chatId),
-    send: (chatId, prompt, attachments) =>
-      invoke("chat:send", attachments ? { chatId, prompt, attachments } : { chatId, prompt }),
+    send: (chatId, prompt, attachments, classification) =>
+      invoke("chat:send", {
+        chatId,
+        prompt,
+        ...(attachments ? { attachments } : {}),
+        ...(classification ? { classification } : {}),
+      }),
     cancel: (chatId) => invoke("chat:cancel", chatId),
+  },
+
+  session: {
+    state: () => invoke("session:state", undefined),
+    connect: (baseUrl, email, password) => invoke("session:connect", { baseUrl, email, password }),
+    disconnect: () => invoke("session:disconnect", undefined),
+    selectWorkspace: (workspaceId) => invoke("session:select-workspace", workspaceId),
+  },
+
+  approvals: {
+    decide: (approvalId, decision) => invoke("approval:decide", { approvalId, decision }),
   },
 
   preview: {
@@ -46,6 +62,7 @@ const api: WorkbenchApi = {
     pick: () => invoke("document:pick", undefined),
     read: (documentId) => invoke("document:read", documentId),
     readSpreadsheet: (documentId) => invoke("document:read-spreadsheet", documentId),
+    save: (documentId, filename) => invoke("document:save", { documentId, filename }),
   },
 
   browser: {

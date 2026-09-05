@@ -7,7 +7,8 @@ import { BrowserPane } from "./services/browser-pane.js";
 import { ChatService } from "./services/chat-service.js";
 import { ChatStore } from "./services/chat-store.js";
 import { DocumentLibrary } from "./services/document-library.js";
-import { ScriptedAgentGateway } from "./services/scripted-agent.js";
+import { BackendAgentGateway } from "./services/backend-agent.js";
+import { SessionManager } from "./services/session.js";
 import { createMainWindow } from "./window.js";
 
 /**
@@ -27,6 +28,7 @@ if (!app.requestSingleInstanceLock()) {
 const events = new EventBroadcaster();
 const browserPane = new BrowserPane(events);
 const documents = new DocumentLibrary();
+const session = new SessionManager(events);
 let chats: ChatService | null = null;
 let store: ChatStore | null = null;
 
@@ -39,10 +41,10 @@ async function main(): Promise<void> {
   applySecurityPolicy();
 
   store = await ChatStore.open(app.getPath("userData"));
-  chats = new ChatService(store, new ScriptedAgentGateway(), events);
+  chats = new ChatService(store, new BackendAgentGateway({ session, documents }), events);
 
   openWindow();
-  registerIpcHandlers({ chats, documents, browserPane });
+  registerIpcHandlers({ chats, documents, session, browserPane });
 
   app.on("second-instance", () => focusExistingWindow());
 

@@ -1,4 +1,4 @@
-import type { ChatId, ChatSummary } from "@shared/types.js";
+import type { ChatId, ChatSummary, SessionState } from "@shared/types.js";
 
 export interface ChatSidebarProps {
   chats: ChatSummary[];
@@ -6,6 +6,9 @@ export interface ChatSidebarProps {
   onSelect: (chatId: ChatId) => void;
   onCreate: () => void;
   onDelete: (chatId: ChatId) => void;
+  session: SessionState;
+  onSelectWorkspace: (workspaceId: string) => void;
+  onDisconnect: () => void;
 }
 
 export function ChatSidebar({
@@ -14,6 +17,9 @@ export function ChatSidebar({
   onSelect,
   onCreate,
   onDelete,
+  session,
+  onSelectWorkspace,
+  onDisconnect,
 }: ChatSidebarProps): React.JSX.Element {
   return (
     <nav className="sidebar" aria-label="Conversations">
@@ -55,7 +61,32 @@ export function ChatSidebar({
       </ul>
 
       <footer className="sidebar__foot">
-        <span className="sidebar__badge">On-premise</span>
+        {session.workspaces.length > 1 ? (
+          <select
+            className="sidebar__workspace"
+            value={session.workspace?.id ?? ""}
+            onChange={(event) => onSelectWorkspace(event.target.value)}
+            aria-label="Workspace"
+          >
+            {session.workspaces.map((workspace) => (
+              <option key={workspace.id} value={workspace.id}>
+                {workspace.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="sidebar__workspace-name">{session.workspace?.name ?? "No workspace"}</span>
+        )}
+
+        <div className="sidebar__session">
+          <span className="sidebar__account" title={session.baseUrl}>
+            <span className="sidebar__dot" aria-hidden="true" />
+            {session.user?.email ?? "Connected"}
+          </span>
+          <button type="button" className="sidebar__signout" onClick={onDisconnect}>
+            Sign out
+          </button>
+        </div>
       </footer>
     </nav>
   );

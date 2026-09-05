@@ -107,16 +107,23 @@ export class ChatStore {
   }
 
   /**
-   * Replaces a message's blocks in place. Returns the updated message, or
+   * Replaces a message's content in place. Returns the updated message, or
    * `null` if it has since been deleted — which happens routinely when a chat
    * is removed while its agent turn is still streaming.
    */
-  replaceBlocks(chatId: ChatId, messageId: MessageId, blocks: Message["blocks"]): Message | null {
+  replaceContent(
+    chatId: ChatId,
+    messageId: MessageId,
+    blocks: Message["blocks"],
+    trace?: Message["trace"],
+  ): Message | null {
     const chat = this.#chats.get(chatId);
     const message = chat?.messages.find((candidate) => candidate.id === messageId);
     if (!chat || !message) return null;
 
     message.blocks = structuredClone(blocks);
+    // A later publish without a trace must not erase one already recorded.
+    if (trace) message.trace = structuredClone(trace);
     chat.updatedAt = new Date().toISOString();
     this.#schedulePersist();
     return structuredClone(message);

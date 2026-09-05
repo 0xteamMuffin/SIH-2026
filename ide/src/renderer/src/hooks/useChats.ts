@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { Chat, ChatId, ChatSummary, DocumentRef, Message } from "@shared/types.js";
+import type { Chat, ChatId, ChatSummary, DataClassification, DocumentRef, Message } from "@shared/types.js";
 import { isTerminalRunState } from "@shared/types.js";
 
 export interface ChatsController {
@@ -14,7 +14,7 @@ export interface ChatsController {
   newChat: () => void;
   deleteChat: (chatId: ChatId) => void;
   renameChat: (chatId: ChatId, title: string) => void;
-  send: (prompt: string, attachments?: DocumentRef[]) => void;
+  send: (prompt: string, attachments?: DocumentRef[], classification?: DataClassification) => void;
   cancel: () => void;
   dismissError: () => void;
 }
@@ -156,12 +156,12 @@ export function useChats(): ChatsController {
   );
 
   const send = useCallback(
-    (prompt: string, attachments: DocumentRef[] = []) => {
+    (prompt: string, attachments: DocumentRef[] = [], classification: DataClassification = "SYNTHETIC") => {
       const chatId = activeChatIdRef.current;
       if (!chatId) return;
       // The appended message arrives over the event bridge, so nothing is
       // added to state here — that would duplicate the turn.
-      window.workbench.chat.send(chatId, prompt, attachments).catch(report);
+      window.workbench.chat.send(chatId, prompt, attachments, classification).catch(report);
     },
     [report],
   );

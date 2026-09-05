@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import type { Chat, PreviewCapabilities } from "@shared/types.js";
+import type { Chat, PreviewCapabilities, RunTrace } from "@shared/types.js";
 
 import { MessageBlocks } from "./blocks/MessageBlocks.js";
 
@@ -8,9 +8,17 @@ export interface ChatThreadProps {
   chat: Chat;
   capabilities: PreviewCapabilities | null;
   onOpenUrl: (url: string) => void;
+  onShowTrace: (trace: RunTrace) => void;
+  activeTraceRunId: string | null;
 }
 
-export function ChatThread({ chat, capabilities, onOpenUrl }: ChatThreadProps): React.JSX.Element {
+export function ChatThread({
+  chat,
+  capabilities,
+  onOpenUrl,
+  onShowTrace,
+  activeTraceRunId,
+}: ChatThreadProps): React.JSX.Element {
   const endRef = useRef<HTMLDivElement>(null);
   const lastMessage = chat.messages.at(-1);
 
@@ -36,6 +44,15 @@ export function ChatThread({ chat, capabilities, onOpenUrl }: ChatThreadProps): 
                 onOpenUrl={onOpenUrl}
               />
             </div>
+            {message.trace && (
+              <button
+                type="button"
+                className={`turn__trace ${activeTraceRunId === message.trace.runId ? "turn__trace--active" : ""}`}
+                onClick={() => onShowTrace(message.trace!)}
+              >
+                {activeTraceRunId === message.trace.runId ? "Hide trace" : "View trace"}
+              </button>
+            )}
           </article>
         ))}
         <div ref={endRef} />
@@ -50,18 +67,18 @@ function EmptyThread(): React.JSX.Element {
       <div className="empty">
         <h1 className="empty__title">Sovereign Workbench</h1>
         <p className="empty__body">
-          Ask the agent to work on the code and data held on your on-premise deployment. Nothing
-          leaves the cluster.
+          Ask the agent to work on the documents and data held on your on-premise deployment.
+          Nothing leaves the cluster.
         </p>
         <ul className="empty__hints">
           <li>
-            <code>fix the alarm threshold in the quality pipeline</code>
+            <code>Attach an inspection report and ask for an approval note</code>
           </li>
           <li>
-            <code>summarise the latest batch record PDF</code>
+            <code>Build a workbook of the readings with the loss rate per station</code>
           </li>
           <li>
-            <code>open https://example.com</code>
+            <code>Write a Python script to check the thresholds, and run it</code>
           </li>
         </ul>
       </div>

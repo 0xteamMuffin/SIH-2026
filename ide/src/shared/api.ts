@@ -14,9 +14,11 @@ import type {
   Chat,
   ChatId,
   ChatSummary,
+  DataClassification,
   DocumentRef,
   Message,
   PreviewCapabilities,
+  SessionState,
   SpreadsheetModel,
   ViewBounds,
 } from "./types.js";
@@ -28,7 +30,12 @@ export interface ChatApi {
   rename(chatId: ChatId, title: string): Promise<void>;
   remove(chatId: ChatId): Promise<void>;
   /** Records the prompt and starts the agent; replies arrive via `onEvent`. */
-  send(chatId: ChatId, prompt: string, attachments?: DocumentRef[]): Promise<Message>;
+  send(
+    chatId: ChatId,
+    prompt: string,
+    attachments?: DocumentRef[],
+    classification?: DataClassification,
+  ): Promise<Message>;
   cancel(chatId: ChatId): Promise<void>;
 }
 
@@ -36,11 +43,24 @@ export interface PreviewApi {
   capabilities(): Promise<PreviewCapabilities>;
 }
 
+export interface SessionApi {
+  state(): Promise<SessionState>;
+  connect(baseUrl: string, email: string, password: string): Promise<SessionState>;
+  disconnect(): Promise<SessionState>;
+  selectWorkspace(workspaceId: string): Promise<SessionState>;
+}
+
+export interface ApprovalApi {
+  decide(approvalId: string, decision: "APPROVED" | "REJECTED"): Promise<void>;
+}
+
 export interface DocumentApi {
   /** Opens a native file picker. Resolves to `[]` if the user cancels. */
   pick(): Promise<DocumentRef[]>;
   read(documentId: string): Promise<ArrayBuffer>;
   readSpreadsheet(documentId: string): Promise<SpreadsheetModel>;
+  /** Saves a copy to disk. Resolves to `null` if the user cancels. */
+  save(documentId: string, filename: string): Promise<string | null>;
 }
 
 export interface BrowserApi {
@@ -56,6 +76,8 @@ export interface BrowserApi {
 
 export interface WorkbenchApi {
   readonly chat: ChatApi;
+  readonly session: SessionApi;
+  readonly approvals: ApprovalApi;
   readonly preview: PreviewApi;
   readonly documents: DocumentApi;
   readonly browser: BrowserApi;
