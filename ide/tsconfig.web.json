@@ -1,0 +1,27 @@
+{
+  "//": "Renderer: browser context only. No Node types are available here by design.",
+  "include": ["src/renderer/src/**/*", "src/shared/**/*", "src/preload/api.d.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["src/shared/*"],
+      "@renderer/*": ["src/renderer/src/*"]
+    }
+  }
+}

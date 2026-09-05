@@ -4,6 +4,8 @@ An on-premise agentic AI workbench for confidential industrial knowledge work.
 
 Read [the end-to-end guide](./docs/END_TO_END.md) for architecture, data flow, and sovereign-mode details.
 
+The Electron desktop client is documented in [the IDE readme](./ide/README.md). It is a chat-first agentic surface, not a code editor: the user states an intent and the agent operates on the code and data already held on the on-premise deployment.
+
 Backend delivery is tracked in [the backend roadmap](./docs/BACKEND_ROADMAP.md). Deferred UI integration is tracked separately in [the frontend backlog](./docs/FRONTEND_BACKLOG.md).
 
 Inference providers and models are configured through [the vendor-neutral model registry](./docs/MODEL_CONFIGURATION.md).

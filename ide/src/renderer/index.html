@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sovereign Workbench</title>
+    <!--
+      The renderer is a local document that must never load remote code.
+      Every allowance below is here for a named reason:
+
+      - 'wasm-unsafe-eval'  pdf.js decodes JPEG 2000, JBIG2, and colour
+                            profiles in WebAssembly. This permits WASM
+                            compilation only; it does not enable eval().
+      - worker-src blob:    the pdf.js worker.
+      - img-src blob:       object URLs for image previews and docx-preview's
+                            embedded images.
+      - style-src inline    React inline styles, Vite's dev-injected styles,
+                            and the stylesheet docx-preview generates.
+      - connect-src ws:     Vite's HMR socket; inert in a packaged build.
+
+      Remote origins are absent throughout, so nothing here can reach the
+      network — which is the property that matters for an air-gapped install.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               script-src 'self' 'wasm-unsafe-eval';
+               worker-src 'self' blob:;
+               style-src 'self' 'unsafe-inline';
+               img-src 'self' data: blob:;
+               font-src 'self' data:;
+               connect-src 'self' blob: ws: wss:;
+               object-src 'none';
+               frame-src 'none';
+               base-uri 'none';
+               form-action 'none'"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

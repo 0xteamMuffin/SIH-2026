@@ -1,0 +1,46 @@
+{
+  "name": "sih-2026-ide",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Sovereign Workbench IDE — an agentic, chat-first desktop shell for on-prem code and document work.",
+  "main": "./out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "demo:docs": "node scripts/make-demo-docs.mjs"
+  },
+  "dependencies": {
+    "diff": "^9.0.0",
+    "docx-preview": "^0.4.0",
+    "exceljs": "^4.4.0",
+    "papaparse": "^5.7.0",
+    "pdfjs-dist": "^6.3.289",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "@types/papaparse": "^5.5.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.2.0",
+    "electron-vite": "^5.0.0",
+    "jszip": "^3.10.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "^3.2.7"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
+  }
+}
