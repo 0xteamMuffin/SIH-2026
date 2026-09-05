@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ApprovalBlock, DocumentBlock, StatusBlock, ToolCallBlock } from "@shared/types.js";
 
-import { toBlocks } from "../src/main/services/backend-agent.js";
+import { BackendAgentGateway, toBlocks } from "../src/main/services/backend-agent.js";
 import type { BackendRun } from "../src/main/services/backend-client.js";
 
 function run(overrides: Partial<BackendRun> = {}): BackendRun {
@@ -205,5 +205,56 @@ describe("toBlocks results", () => {
     }));
 
     expect(blocks.map((block) => block.kind)).toEqual(["tool", "text", "status"]);
+  });
+});
+
+describe("runTurn workspace binding", () => {
+  function harness(sessionWorkspace: string) {
+    const created: Array<{ workspaceId: string; conversationId?: string }> = [];
+    const client = {
+      createRun: async (input: { workspaceId: string; task: string; conversationId?: string }) => {
+        created.push(input);
+        return run({ status: "COMPLETED", result: { analysis: "done" } });
+      },
+    };
+    const session = {
+      requireClient: () => client,
+      requireWorkspaceId: () => sessionWorkspace,
+    };
+    return { created, gateway: new BackendAgentGateway({ session: session as never, documents: {} as never }) };
+  }
+
+  const turn = (chatId: string, extra: Record<string, unknown> = {}) => ({
+    chatId,
+    prompt: "summarise that",
+    attachments: [],
+    classification: "INTERNAL" as const,
+    signal: new AbortController().signal,
+    publish: () => {},
+    bindWorkspace: () => {},
+    ...extra,
+  });
+
+  it("binds a chat's first turn to the session's workspace", async () => {
+    const { created, gateway } = harness("workspace-a");
+    const bound: string[] = [];
+
+    await gateway.runTurn(turn("chat-1", { bindWorkspace: (id: string) => bound.push(id) }) as never);
+
+    expect(created[0]?.workspaceId).toBe("workspace-a");
+    expect(bound).toEqual(["workspace-a"]);
+  });
+
+  it("keeps a later turn in the chat's own workspace, not the session's", async () => {
+    // The session's selected workspace can move between turns. Following it
+    // would file the follow-up somewhere the earlier answer is not, and the
+    // backend scopes a thread's history by workspace — so the chat would look
+    // to itself like it had never said anything.
+    const { created, gateway } = harness("workspace-moved-on");
+
+    await gateway.runTurn(turn("chat-1", { workspaceId: "workspace-a" }) as never);
+
+    expect(created[0]?.workspaceId).toBe("workspace-a");
+    expect(created[0]?.conversationId).toBe("chat-1");
   });
 });

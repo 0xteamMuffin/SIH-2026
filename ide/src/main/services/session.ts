@@ -8,6 +8,24 @@ import { signInDefaults } from "./dev-defaults.js";
 const DEFAULT_WORKSPACE_NAME = "Workbench";
 
 /**
+ * Puts the workspace the IDE should default to at the head of the list.
+ *
+ * The choice has to be *stable*. The backend lists newest first, so taking the
+ * head would move the default whenever a workspace is created anywhere — by
+ * another client, another user, or a test script — and a chat's later turns
+ * would then be filed away from the earlier ones they follow on from.
+ *
+ * So: a workspace named after this app if one exists, otherwise the oldest,
+ * which nothing created later can displace.
+ */
+export function orderByDefaultFirst(existing: WorkspaceSummary[]): WorkspaceSummary[] {
+  const oldestFirst = [...existing].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const preferred = oldestFirst.find((workspace) => workspace.name === DEFAULT_WORKSPACE_NAME) ?? oldestFirst[0];
+  if (!preferred) return existing;
+  return [preferred, ...existing.filter((workspace) => workspace.id !== preferred.id)];
+}
+
+/**
  * Owns the connection to the backend.
  *
  * Credentials and tokens stay here and are never persisted to disk or sent to
@@ -102,13 +120,22 @@ export class SessionManager {
   }
 
   /**
-   * A fresh account has no workspace, and a run cannot be created without one,
-   * so one is provisioned rather than leaving the user at a dead end.
+   * Resolves the workspaces to offer, with the default first.
+   *
+   * The choice has to be *stable*. The backend lists newest first, so taking
+   * the head would move the default every time a workspace is created
+   * anywhere — by another client, another user, or a test script — and a chat
+   * would then be filed away from the turns it is meant to follow on from.
+   *
+   * So: a workspace named after this app if one exists, otherwise the oldest,
+   * which nothing created later can displace. A fresh account has none, and a
+   * run cannot be created without one, so one is provisioned rather than
+   * leaving the user at a dead end.
    */
   async #resolveWorkspaces(client: BackendClient): Promise<WorkspaceSummary[]> {
     const existing = await client.listWorkspaces();
-    if (existing.length > 0) return existing;
-    return [await client.createWorkspace(DEFAULT_WORKSPACE_NAME)];
+    if (existing.length === 0) return [await client.createWorkspace(DEFAULT_WORKSPACE_NAME)];
+    return orderByDefaultFirst(existing);
   }
 
   #publish(state: SessionState): void {

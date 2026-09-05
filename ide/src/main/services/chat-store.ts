@@ -83,6 +83,27 @@ export class ChatStore {
     this.#schedulePersist();
   }
 
+  /** Backend workspace this chat's turns belong to, if it has run one. */
+  workspaceFor(chatId: ChatId): string | undefined {
+    return this.#chats.get(chatId)?.workspaceId;
+  }
+
+  /**
+   * Fixes the chat to a workspace on its first turn.
+   *
+   * Deliberately write-once. A chat's turns have to stay together for the
+   * backend to find the thread's earlier answers, so a later change to the
+   * session's selected workspace must not drag an existing chat along with it.
+   * `updatedAt` is left alone because this is bookkeeping, not activity, and
+   * should not reorder the sidebar.
+   */
+  bindWorkspace(chatId: ChatId, workspaceId: string): void {
+    const chat = this.#require(chatId);
+    if (chat.workspaceId) return;
+    chat.workspaceId = workspaceId;
+    this.#schedulePersist();
+  }
+
   delete(chatId: ChatId): void {
     if (this.#chats.delete(chatId)) this.#schedulePersist();
   }

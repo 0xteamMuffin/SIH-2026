@@ -10,6 +10,16 @@ export interface AgentTurnRequest {
   /** Aborted when the user stops the turn or the app quits. */
   signal: AbortSignal;
   /**
+   * Workspace this chat is already bound to, if it has run a turn before.
+   * Absent on a chat's first turn.
+   */
+  workspaceId?: string;
+  /**
+   * Records the workspace the turn actually ran in, so every later turn of
+   * this chat lands in the same one and can see this turn's answer.
+   */
+  bindWorkspace: (workspaceId: string) => void;
+  /**
    * Publishes the agent reply's current state. Called repeatedly as the turn
    * progresses; each call supersedes the previous one, so implementations pass
    * the full block list rather than a delta.

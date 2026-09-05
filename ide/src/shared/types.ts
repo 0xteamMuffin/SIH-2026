@@ -135,6 +135,15 @@ export interface ChatSummary {
   createdAt: string;
   updatedAt: string;
   messageCount: number;
+  /**
+   * Backend workspace this chat's turns belong to, fixed on the first turn.
+   *
+   * A conversation lives inside one workspace: the backend loads a thread's
+   * earlier turns scoped to it, so a chat that moved between workspaces would
+   * silently lose its own history. The session's current workspace can change
+   * underneath a chat, so the chat remembers its own.
+   */
+  workspaceId?: string;
 }
 
 export interface Chat extends ChatSummary {
@@ -367,6 +376,12 @@ export interface SessionUser {
 export interface WorkspaceSummary {
   id: string;
   name: string;
+  /**
+   * ISO-8601 UTC. Used to choose a default that stays put: the backend lists
+   * newest first, so ordering by age is what stops a newly created workspace
+   * from becoming someone's default.
+   */
+  createdAt: string;
 }
 
 /**

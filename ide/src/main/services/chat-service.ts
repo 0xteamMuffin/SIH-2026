@@ -150,7 +150,17 @@ export class ChatService {
     };
 
     try {
-      await this.#agent.runTurn({ chatId, prompt, attachments, classification, signal: controller.signal, publish });
+      const bound = this.#store.workspaceFor(chatId);
+      await this.#agent.runTurn({
+        chatId,
+        prompt,
+        attachments,
+        classification,
+        signal: controller.signal,
+        publish,
+        ...(bound ? { workspaceId: bound } : {}),
+        bindWorkspace: (workspaceId) => this.#store.bindWorkspace(chatId, workspaceId),
+      });
     } catch (error) {
       if (!controller.signal.aborted) {
         console.error("[chat-service] agent turn failed", error);

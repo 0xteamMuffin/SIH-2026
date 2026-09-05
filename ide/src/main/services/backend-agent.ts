@@ -81,9 +81,14 @@ export class BackendAgentGateway implements AgentGateway {
     this.#documents = options.documents;
   }
 
-  async runTurn({ chatId, prompt, signal, publish, attachments, classification }: AgentTurnRequest): Promise<void> {
+  async runTurn({ chatId, prompt, signal, publish, attachments, classification, workspaceId: bound, bindWorkspace }: AgentTurnRequest): Promise<void> {
     const client = this.#session.requireClient();
-    const workspaceId = this.#session.requireWorkspaceId();
+    // A chat stays in the workspace it started in. The session's selection can
+    // move between turns, and following it would put a follow-up in a
+    // different workspace from the answer it is asking about — which the
+    // backend scopes history by, so the thread would appear to have no past.
+    const workspaceId = bound ?? this.#session.requireWorkspaceId();
+    bindWorkspace(workspaceId);
 
     // Publish a trace before anything is uploaded or created, so the graph is
     // on screen the moment the message is sent rather than a second later.
