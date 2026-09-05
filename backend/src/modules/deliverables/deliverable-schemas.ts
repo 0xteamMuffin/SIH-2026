@@ -19,7 +19,7 @@ export const citationSchema = z.object({
 
 const severitySchema = z.enum(["critical", "high", "medium", "low", "info"]);
 
-function findingSchema(detailLimit: number) {
+export function findingSchema(detailLimit: number) {
   return z.object({
     title: text(140),
     detail: text(detailLimit),
@@ -188,3 +188,61 @@ export const xlsxDeliverableInputSchema = z.object({
 
 export type PptxDeliverableInput = z.infer<typeof pptxDeliverableInputSchema>;
 export type XlsxDeliverableInput = z.infer<typeof xlsxDeliverableInputSchema>;
+
+// ─── Word approval notes ─────────────────────────────────────────────────────
+
+/**
+ * An approval note the model actually writes.
+ *
+ * Previously this document was assembled from a fixed skeleton, so the model's
+ * reasoning arrived as one undifferentiated blob and every finding was filed
+ * as informational. Giving it real structure is what lets a reviewer see the
+ * recommendation, the findings behind it, and the conditions attached — which
+ * is the whole point of an approval note.
+ */
+export const docxDeliverableInputSchema = z.object({
+  title: text(160),
+  purpose: text(2_000),
+  background: text(4_000).optional(),
+  findings: z.array(findingSchema(1_500)).min(1).max(20),
+  recommendation: text(2_000),
+  conditions: z.array(text(500)).max(20).optional(),
+  citations: z.array(citationSchema).min(1).max(200),
+}).strict().superRefine((input, context) => {
+  const citationIds = new Set<string>();
+  input.citations.forEach((citation, index) => {
+    if (citationIds.has(citation.id)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate citation id: ${citation.id}`, path: ["citations", index, "id"] });
+    }
+    citationIds.add(citation.id);
+  });
+
+  input.findings.forEach((finding, findingIndex) => {
+    finding.citationIds.forEach((citationId, citationIndex) => {
+      if (!citationIds.has(citationId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Unknown citation id: ${citationId}`,
+          path: ["findings", findingIndex, "citationIds", citationIndex],
+        });
+      }
+    });
+  });
+});
+
+export type DocxDeliverableInput = z.infer<typeof docxDeliverableInputSchema>;
+
+// ─── Model-authored portions ─────────────────────────────────────────────────
+//
+// The model writes the body of a deliverable but never its citation list:
+// citations are resolved from evidence records the run actually gathered, so a
+// fabricated source cannot reach the document. The model refers to them by id,
+// and the full schemas above reject any id that does not resolve.
+
+export const authoredDocxSchema = docxDeliverableInputSchema.innerType().omit({ title: true, citations: true });
+export const authoredPptxSchema = pptxDeliverableInputSchema.innerType().omit({ title: true, citations: true });
+export const authoredXlsxSchema = xlsxDeliverableInputSchema.innerType().omit({ title: true, citations: true });
+
+export type AuthoredDocx = z.infer<typeof authoredDocxSchema>;
+export type AuthoredPptx = z.infer<typeof authoredPptxSchema>;
+export type AuthoredXlsx = z.infer<typeof authoredXlsxSchema>;

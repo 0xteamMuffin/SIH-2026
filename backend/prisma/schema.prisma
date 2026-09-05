@@ -306,6 +306,8 @@ model AgentRun {
   workspaceId        String             @map("workspace_id") @db.Uuid
   requestedBy        String             @map("requested_by") @db.Uuid
   task               String
+  /** Groups turns of one chat thread; null for a standalone run. */
+  conversationId     String?            @map("conversation_id") @db.Uuid
   taskCapability     String             @map("task_capability")
   modelProfile       String             @map("model_profile")
   modelReason        String             @map("model_reason")
@@ -338,6 +340,7 @@ model AgentRun {
   @@index([workspaceId, createdAt])
   @@index([status, leaseExpiresAt])
   @@index([sourceArtifactId, status])
+  @@index([workspaceId, conversationId, createdAt(sort: Desc)])
   @@map("agent_runs")
 }
 

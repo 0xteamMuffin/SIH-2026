@@ -34,7 +34,15 @@ agentRouter.get("/workspaces/:workspaceId/runs", authenticate, requireWorkspaceA
 
 agentRouter.post("/workspaces/:workspaceId/runs", authenticate, requireWorkspaceRole("ADMIN", "OPERATOR"), async (request, response, next) => {
   try {
-    const input = z.object({ task: z.string().min(10).max(10_000), artifactId: z.string().uuid().optional(), dataClassification: z.nativeEnum(DataClassification) }).parse(request.body);
+    // A one-word follow-up such as "shorter" or "why?" is a legitimate turn
+    // once a run carries conversation history, so the floor is a non-empty
+    // string rather than an arbitrary length.
+    const input = z.object({
+      task: z.string().trim().min(1).max(10_000),
+      artifactId: z.string().uuid().optional(),
+      conversationId: z.string().uuid().optional(),
+      dataClassification: z.nativeEnum(DataClassification),
+    }).parse(request.body);
     response.status(202).json({ run: await createRun({ workspaceId: String(request.params.workspaceId), userId: request.user!.id, ...input }) });
   } catch (error) { next(error); }
 });

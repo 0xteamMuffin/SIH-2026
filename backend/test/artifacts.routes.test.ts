@@ -64,7 +64,10 @@ describe("artifact routes", () => {
     const response = await request(createTestApp()).get(`/api/workspaces/${workspaceId}/artifacts`).query({ limit: "101", kind: "UNKNOWN" });
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: { code: "INVALID_INPUT", message: "Request validation failed" } });
+    // Authenticated callers are told which field failed; the bare message is
+    // reserved for unauthenticated endpoints.
+    expect(response.body.error.code).toBe("INVALID_INPUT");
+    expect(response.body.error.message).toMatch(/^Request validation failed — /);
     expect(artifactServiceMock.listArtifacts).not.toHaveBeenCalled();
   });
 

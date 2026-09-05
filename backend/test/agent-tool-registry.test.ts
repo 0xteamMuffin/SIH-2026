@@ -11,16 +11,101 @@ describe("agent tool registry", () => {
 
   it("validates and strips no unregistered sandbox input", () => {
     expect(() => validateToolInput("sandbox.execute", { language: "javascript", code: "1 + 1", network: true })).toThrow();
-    expect(validateToolInput("deliverable.createApprovalNote", { format: "docx" })).toEqual({ format: "docx" });
+    // The approval note now carries the document body, so a bare format is
+    // no longer a complete call.
+    expect(() => validateToolInput("deliverable.createApprovalNote", { format: "docx" })).toThrow();
     expect(() => validateToolInput("code.persistOutput", { language: "python", code: "print(1)", explanation: "test", extra: true })).toThrow();
   });
 
-  it("registers deterministic Office generators without approval", () => {
-    const evidenceId = "10000000-0000-4000-8000-000000000001";
-    expect(validateToolInput("deliverable.createPresentation", { format: "pptx", evidenceIds: [evidenceId] })).toEqual({ format: "pptx", evidenceIds: [evidenceId] });
-    expect(validateToolInput("deliverable.createSpreadsheet", { format: "xlsx", evidenceIds: [evidenceId] })).toEqual({ format: "xlsx", evidenceIds: [evidenceId] });
+  it("registers Office generators without approval", () => {
     expect(toolRequiresApproval("deliverable.createPresentation")).toBe(false);
     expect(toolRequiresApproval("deliverable.createSpreadsheet")).toBe(false);
+    expect(toolRequiresApproval("deliverable.createApprovalNote")).toBe(false);
+  });
+
+  it("requires Office generators to carry the authored document body", () => {
+    const evidenceId = "10000000-0000-4000-8000-000000000001";
+
+    expect(() => validateToolInput("deliverable.createPresentation", { format: "pptx", evidenceIds: [evidenceId] })).toThrow();
+    expect(() => validateToolInput("deliverable.createSpreadsheet", { format: "xlsx", evidenceIds: [evidenceId] })).toThrow();
+  });
+
+  it("accepts an authored spreadsheet with typed table data and a real formula", () => {
+    const evidenceId = "10000000-0000-4000-8000-000000000001";
+    const input = validateToolInput("deliverable.createSpreadsheet", {
+      format: "xlsx",
+      evidenceIds: [evidenceId],
+      content: {
+        sections: [{
+          title: "Findings",
+          summary: "Station 41 is the thinnest point.",
+          findings: [{ title: "Station 41", detail: "6.81 mm.", severity: "high", citationIds: ["S1"] }],
+        }],
+        assumptions: ["Retirement thickness is 6.53 mm."],
+        tables: [{
+          name: "Readings",
+          title: "Thickness by station",
+          columns: [{ header: "Station", dataType: "integer" }, { header: "Thickness", dataType: "number" }],
+          rows: [[41, 6.81]],
+        }],
+        calculations: [{ label: "Mean", formula: "AVERAGE(B2:B2)", unit: "mm", assumptions: [], citationIds: ["S1"] }],
+      },
+    });
+
+    expect(input.content.tables[0].rows).toEqual([[41, 6.81]]);
+    expect(input.content.sections[0].findings[0].severity).toBe("high");
+  });
+
+  it("rejects an authored table whose cells contradict their column type", () => {
+    const evidenceId = "10000000-0000-4000-8000-000000000001";
+
+    expect(() => validateToolInput("deliverable.createSpreadsheet", {
+      format: "xlsx",
+      evidenceIds: [evidenceId],
+      content: {
+        sections: [{ title: "S", summary: "S", findings: [{ title: "F", detail: "D", severity: "low", citationIds: ["S1"] }] }],
+        assumptions: ["A"],
+        tables: [{
+          name: "Readings",
+          title: "Thickness",
+          columns: [{ header: "Station", dataType: "integer" }],
+          rows: [["not a number"]],
+        }],
+        calculations: [{ label: "Mean", formula: "SUM(A2:A2)", unit: "mm", assumptions: [], citationIds: ["S1"] }],
+      },
+    })).toThrow();
+  });
+
+  it("rejects a formula using a function outside the allowlist", () => {
+    const evidenceId = "10000000-0000-4000-8000-000000000001";
+
+    expect(() => validateToolInput("deliverable.createSpreadsheet", {
+      format: "xlsx",
+      evidenceIds: [evidenceId],
+      content: {
+        sections: [{ title: "S", summary: "S", findings: [{ title: "F", detail: "D", severity: "low", citationIds: ["S1"] }] }],
+        assumptions: ["A"],
+        tables: [{ name: "T", title: "T", columns: [{ header: "A", dataType: "number" }], rows: [[1]] }],
+        calculations: [{ label: "X", formula: "EXEC(A1)", unit: "mm", assumptions: [], citationIds: ["S1"] }],
+      },
+    })).toThrow();
+  });
+
+  it("accepts an authored approval note carrying a real severity", () => {
+    const evidenceId = "10000000-0000-4000-8000-000000000001";
+    const input = validateToolInput("deliverable.createApprovalNote", {
+      format: "docx",
+      evidenceIds: [evidenceId],
+      content: {
+        purpose: "Seek approval to return the line to service.",
+        findings: [{ title: "Station 41", detail: "6.81 mm, above retirement thickness.", severity: "critical", citationIds: ["S1"] }],
+        recommendation: "Approve with a reduced inspection interval.",
+        conditions: ["Re-survey within 24 months."],
+      },
+    });
+
+    expect(input.content.findings[0].severity).toBe("critical");
+    expect(input.content.conditions).toEqual(["Re-survey within 24 months."]);
   });
 
   it("registers bounded knowledge search as a low-risk tool without client scope filters", () => {

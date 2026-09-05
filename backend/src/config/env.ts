@@ -73,7 +73,11 @@ const schema = z.object({
   RUN_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).default(10_000),
   RUN_RECOVERY_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000).max(600_000).default(15_000),
   AGENT_MAX_TURNS: z.coerce.number().int().min(1).max(32).default(4),
-  AGENT_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(64).default(5),
+  // A single coding turn already spends four calls (knowledge search, model
+  // analysis, persisting the code, running the sandbox), and resuming after an
+  // approval can re-route to a fallback profile and spend more. Five left no
+  // headroom at all, so a normal run hit the limit.
+  AGENT_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(64).default(16),
   AGENT_MAX_INPUT_TOKENS: z.coerce.number().int().min(1).max(10_000_000).default(32_768),
   AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(1).max(10_000_000).default(8_192),
   AGENT_MAX_TOTAL_TOKENS: z.coerce.number().int().min(1).max(10_000_000).default(40_960),

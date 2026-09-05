@@ -2,7 +2,7 @@ import { DataClassification, ModelInvocationStatus } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../lib/errors.js";
 import { allowsExternalInference } from "../../lib/data-classification.js";
-import { askModel, type ModelImageInput, type ModelResponse } from "./model-provider.js";
+import { askModel, type ModelImageInput, type TextModelResponse } from "./model-provider.js";
 import { estimateInvocationCost } from "./model-pricing.js";
 import type { ModelProfile } from "./model-registry.js";
 import type { RoutingDecision } from "./model-router.js";
@@ -63,7 +63,7 @@ export async function invokeModelWithFallbacks(input: {
   images?: readonly ModelImageInput[];
   signal?: AbortSignal;
   tokenBudget: ModelTokenBudget;
-}): Promise<{ profile: ModelProfile; response: ModelResponse }> {
+}): Promise<{ profile: ModelProfile; response: TextModelResponse }> {
   const candidates = [input.decision.profile, ...input.decision.fallbacks]
     .filter((profile, index, profiles) => profiles.findIndex((candidate) => candidate.id === profile.id) === index)
     .filter((profile) => profile.enabled && profile.capabilities.includes(input.decision.capability))
@@ -114,7 +114,7 @@ export async function invokeModelWithFallbacks(input: {
       },
     });
     const startedAt = performance.now();
-    let response: ModelResponse;
+    let response: TextModelResponse;
     try {
       response = await askModel(boundedProfile, input.classification, input.system, input.prompt, input.signal, input.images);
     } catch (error) {

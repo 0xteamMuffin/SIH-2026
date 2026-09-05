@@ -42,6 +42,8 @@
       "providerId": "development-remote",
       "modelId": "nvidia/nemotron-3-super-120b-a12b:free",
       "capabilities": ["general", "document"],
+      "supportsTools": true,
+      "maxOutputTokens": 8192,
       "priority": 10,
       "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
@@ -50,6 +52,8 @@
       "providerId": "development-remote",
       "modelId": "nvidia/nemotron-3-ultra-550b-a55b:free",
       "capabilities": ["general", "document", "code"],
+      "supportsTools": true,
+      "maxOutputTokens": 8192,
       "priority": 20,
       "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
@@ -58,6 +62,8 @@
       "providerId": "development-remote",
       "modelId": "cohere/north-mini-code:free",
       "capabilities": ["code"],
+      "supportsTools": true,
+      "maxOutputTokens": 8192,
       "priority": 10,
       "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
@@ -104,6 +110,8 @@
       "providerId": "development-remote",
       "modelId": "openrouter/free",
       "capabilities": ["general", "document", "vision", "code"],
+      "supportsTools": true,
+      "maxOutputTokens": 8192,
       "priority": 900,
       "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
@@ -112,6 +120,8 @@
       "providerId": "groq",
       "modelId": "openai/gpt-oss-120b",
       "capabilities": ["general", "document"],
+      "supportsTools": true,
+      "maxOutputTokens": 8192,
       "priority": 200
     },
     {
@@ -119,6 +129,8 @@
       "providerId": "groq",
       "modelId": "qwen/qwen3.8-27b",
       "capabilities": ["code"],
+      "supportsTools": true,
+      "maxOutputTokens": 8192,
       "priority": 200
     },
     {
@@ -126,6 +138,8 @@
       "providerId": "gemini",
       "modelId": "gemini-2.5-flash",
       "capabilities": ["general", "document", "vision", "code"],
+      "supportsTools": true,
+      "maxOutputTokens": 8192,
       "priority": 300
     },
     {
@@ -133,6 +147,8 @@
       "providerId": "mistral",
       "modelId": "mistral-small-latest",
       "capabilities": ["general", "document", "code"],
+      "supportsTools": true,
+      "maxOutputTokens": 8192,
       "priority": 400
     },
     {
@@ -140,6 +156,8 @@
       "providerId": "cloudflare",
       "modelId": "@cf/openai/gpt-oss-120b",
       "capabilities": ["general", "document", "code"],
+      "supportsTools": true,
+      "maxOutputTokens": 8192,
       "priority": 500
     },
     {
@@ -147,6 +165,7 @@
       "providerId": "cloudflare",
       "modelId": "@cf/qwen/qwen3.8-27b",
       "capabilities": ["vision"],
+      "supportsTools": true,
       "priority": 500
     },
     {
@@ -168,6 +187,8 @@
       "providerId": "local-runtime",
       "modelId": "qwen3.5:4b",
       "capabilities": ["general", "document"],
+      "supportsTools": true,
+      "maxOutputTokens": 8192,
       "priority": 1000
     },
     {
@@ -182,6 +203,8 @@
       "providerId": "local-runtime",
       "modelId": "qwen2.5-coder:7b",
       "capabilities": ["code"],
+      "supportsTools": true,
+      "maxOutputTokens": 8192,
       "priority": 1000
     },
     {

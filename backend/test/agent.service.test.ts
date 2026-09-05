@@ -245,7 +245,7 @@ describe("agent run access", () => {
     runToolCallMock.create.mockResolvedValue({});
     runToolCallMock.update.mockResolvedValue({});
     runMessageMock.create.mockResolvedValue({});
-    evidenceMock.create.mockResolvedValue({ id: "evidence-1" });
+    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000099" });
     invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Use scheduled inspections.", provider: "local-runtime", modelId: "qwen3.5:4b", latencyMs: 10 } });
 
     await processRun("run-1");
@@ -289,7 +289,14 @@ describe("agent run access", () => {
       sourceRef,
       score: 0.92,
     }]);
-    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Inspect V-101 every 30 days." } });
+    // Two model calls now: the analysis, then the authored document body.
+    invokeModelMock
+      .mockResolvedValueOnce({ profile: selectedProfile, response: { text: "Inspect V-101 every 30 days." } })
+      .mockResolvedValueOnce({ profile: selectedProfile, response: { text: JSON.stringify({
+        purpose: "Confirm the valve inspection interval.",
+        findings: [{ title: "V-101 interval", detail: "Inspection is required every 30 days.", severity: "medium", citationIds: ["S1"] }],
+        recommendation: "Retain the 30-day interval.",
+      }) } });
     approvalNoteMock.mockResolvedValue(Buffer.from("docx"));
     artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000011", sizeBytes: 4 });
 
@@ -310,13 +317,97 @@ describe("agent run access", () => {
     expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({
       prompt: expect.stringContaining(sourceRef),
     }));
-    expect(approvalNoteMock).toHaveBeenCalledWith(run.task, [{
-      id: "20000000-0000-4000-8000-000000000011",
+    // The document now carries what the model wrote, bound to citations the
+    // run actually gathered.
+    expect(approvalNoteMock).toHaveBeenCalledWith(expect.objectContaining({
+      title: run.task,
+      purpose: "Confirm the valve inspection interval.",
+      recommendation: "Retain the 30-day interval.",
+      findings: [expect.objectContaining({ severity: "medium", citationIds: ["S1"] })],
+      citations: [expect.objectContaining({ id: "S1", title: "Inspection manual - Valves", source: sourceRef })],
+    }));
+  });
+
+  it("completes the run when knowledge search fails, rather than discarding the source it already read", async () => {
+    const artifactId = "40000000-0000-4000-8000-000000000021";
+    const run = {
+      id: "run-knowledge-down",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Summarise the attached report",
+      taskCapability: "document",
+      modelProfile: "remote-general",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.SYNTHETIC,
+      status: "PENDING",
+      state: {},
+      maxTurns: 4,
+      maxToolCalls: 8,
+      deadlineAt: new Date(Date.now() + 60_000),
+      sourceArtifactId: null,
+    };
+    const selectedProfile = { id: "local-general", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["general", "document"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000099" });
+    // A provider rate limit is transient and unrelated to the user's task.
+    knowledgeSearchMock.mockRejectedValue(new Error("Embedding provider rate limit exceeded"));
+    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Summary of the report." } });
+    artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000021", sizeBytes: 4 });
+
+    await processRun(run.id);
+
+    // The run still reaches the model and completes.
+    expect(invokeModelMock).toHaveBeenCalled();
+    expect(agentRunMock.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+    );
+    void artifactId;
+  });
+
+  it("falls back to a labelled minimal document when the model cannot author a valid body", async () => {
+    const artifactId = "40000000-0000-4000-8000-000000000011";
+    const sourceRef = `artifact:${artifactId}`;
+    const run = {
+      id: "run-fallback",
+      workspaceId: "workspace-1",
+      requestedBy: "user-1",
+      task: "Create an approval note for the valve inspection interval",
+      taskCapability: "document",
+      modelProfile: "remote-general",
+      modelReason: "persisted route",
+      dataClassification: DataClassification.INTERNAL,
+      status: "PENDING",
+      state: {},
+      maxTurns: 4,
+      maxToolCalls: 8,
+      deadlineAt: new Date(Date.now() + 60_000),
+      sourceArtifactId: null,
+    };
+    const selectedProfile = { id: "local-general", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["general", "document"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
+    agentRunMock.findUnique.mockResolvedValue(run);
+    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
+    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000099" });
+    knowledgeSearchMock.mockResolvedValue([{
+      artifactId,
       title: "Inspection manual - Valves",
-      summary: "Valve V-101 must be inspected every 30 days.",
-      facts: ["Valve V-101 must be inspected every 30 days."],
+      text: "Valve V-101 must be inspected every 30 days.",
       sourceRef,
+      score: 0.92,
     }]);
+    // Analysis succeeds; both authoring attempts return prose instead of JSON.
+    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Inspect V-101 every 30 days." } });
+    approvalNoteMock.mockResolvedValue(Buffer.from("docx"));
+    artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000011", sizeBytes: 4 });
+
+    await processRun(run.id);
+
+    // The run completes rather than discarding analysis that is already correct.
+    expect(approvalNoteMock).toHaveBeenCalledWith(expect.objectContaining({
+      purpose: expect.stringMatching(/Structured authoring was unavailable/),
+    }));
+    // One analysis call plus two authoring attempts before giving up.
+    expect(invokeModelMock).toHaveBeenCalledTimes(3);
   });
 
   it("sends a bounded original image without Docling and does not persist its bytes", async () => {
@@ -366,7 +457,7 @@ describe("agent run access", () => {
     runToolCallMock.create.mockResolvedValue({});
     runToolCallMock.update.mockResolvedValue({});
     runMessageMock.create.mockResolvedValue({});
-    evidenceMock.create.mockResolvedValue({ id: "evidence-1" });
+    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000099" });
     artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000001", sizeBytes: 1 });
     invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Valve V-101 appears open.", provider: "local-runtime", modelId: "qwen3.5:4b", latencyMs: 10 } });
 
@@ -423,7 +514,7 @@ describe("agent run access", () => {
     runToolCallMock.create.mockResolvedValue({});
     runToolCallMock.update.mockResolvedValue({});
     runMessageMock.create.mockResolvedValue({});
-    evidenceMock.create.mockResolvedValue({ id: "evidence-1" });
+    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000099" });
     artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000002", sizeBytes: 1 });
     invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Text-only finding.", provider: "local-runtime", modelId: "qwen3.5:4b", latencyMs: 10 } });
 

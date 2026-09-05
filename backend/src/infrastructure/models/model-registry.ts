@@ -33,6 +33,8 @@ export type ModelProfile = {
   apiKeyEnv?: string;
   modelId: string;
   capabilities: ModelCapability[];
+  /** Whether the profile can be given tools. Absent means unknown. */
+  supportsTools?: boolean;
   priority: number;
   enabled: boolean;
   sovereign: boolean;
@@ -82,6 +84,7 @@ const modelSchema = z.object({
   providerId: z.string().min(1),
   modelId: z.string().min(1),
   capabilities: z.array(z.enum(modelCapabilities)).min(1),
+  supportsTools: z.boolean().default(false),
   priority: z.number().int().min(0).default(100),
   enabled: z.boolean().default(true),
   maxOutputTokens: z.number().int().min(1).max(32_768).default(2_048),

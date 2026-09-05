@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { pptxDeliverableInputSchema, xlsxDeliverableInputSchema } from "../src/modules/deliverables/deliverable-schemas.js";
-import { presentationInput, selectDeliverableFormat, spreadsheetInput } from "../src/modules/agent/agent-deliverables.js";
+import { deliverableCitations, fallbackDocx, fallbackPptx, fallbackXlsx, selectDeliverableFormat } from "../src/modules/agent/agent-deliverables.js";
+import { mergeDocx, mergePptx, mergeXlsx } from "../src/modules/agent/deliverable-authoring.js";
+import { docxDeliverableInputSchema } from "../src/modules/deliverables/deliverable-schemas.js";
 import { parseGeneratedCode, sandboxToolResult } from "../src/modules/agent/agent.types.js";
 
 const evidence = [{
@@ -29,13 +31,81 @@ describe("agent generated outputs", () => {
     expect(selectDeliverableFormat("Create an approval note")).toBe("docx");
   });
 
-  it("builds generator-valid PPTX and XLSX inputs with source citations", () => {
-    const pptx = pptxDeliverableInputSchema.parse(presentationInput("Create slides", "Valve finding", evidence));
-    const xlsx = xlsxDeliverableInputSchema.parse(spreadsheetInput("Create workbook", "Valve finding", evidence));
+  it("derives citations from evidence rather than from model output", () => {
+    const citations = deliverableCitations(evidence);
 
-    expect(pptx.citations[0]).toMatchObject({ id: "S1", source: evidence[0].sourceRef });
-    expect(pptx.sections[0].findings[0].citationIds).toEqual(["S1"]);
-    expect(xlsx.citations[0]).toMatchObject({ id: "S1", source: evidence[0].sourceRef });
-    expect(xlsx.calculations[0].citationIds).toEqual(["S1"]);
+    expect(citations).toHaveLength(1);
+    expect(citations[0]).toMatchObject({ id: "S1", source: evidence[0].sourceRef });
+    expect(citations[0].locator).toContain(evidence[0].id);
+  });
+
+  it("refuses to build citations with no evidence", () => {
+    expect(() => deliverableCitations([])).toThrow(/require source evidence/);
+  });
+
+  it("merges model-authored content with server-resolved citations", () => {
+    const citations = deliverableCitations(evidence);
+    const merged = mergeXlsx("Wall thickness review", {
+      sections: [{
+        title: "Findings",
+        summary: "Station 41 is the thinnest point on the run.",
+        findings: [{ title: "Station 41", detail: "6.81 mm, below the alert threshold.", severity: "high", citationIds: ["S1"] }],
+      }],
+      assumptions: ["Retirement thickness is 6.53 mm."],
+      tables: [{
+        name: "Readings",
+        title: "Wall thickness by station",
+        columns: [
+          { header: "Station", dataType: "integer" },
+          { header: "Thickness", dataType: "number", unit: "mm" },
+        ],
+        rows: [[41, 6.81], [42, 7.12]],
+      }],
+      calculations: [{
+        label: "Mean thickness",
+        formula: "AVERAGE(B2:B3)",
+        unit: "mm",
+        cachedResult: 6.965,
+        assumptions: [],
+        citationIds: ["S1"],
+      }],
+    }, citations);
+
+    // Round-tripping through the generator schema proves authored content is
+    // accepted on the same terms as anything else.
+    const parsed = xlsxDeliverableInputSchema.parse(merged);
+    expect(parsed.title).toBe("Wall thickness review");
+    expect(parsed.tables[0].rows).toEqual([[41, 6.81], [42, 7.12]]);
+    expect(parsed.calculations[0].formula).toBe("AVERAGE(B2:B3)");
+    expect(parsed.sections[0].findings[0].severity).toBe("high");
+    expect(parsed.citations[0]).toMatchObject({ id: "S1", source: evidence[0].sourceRef });
+  });
+
+  it("rejects authored content that cites an id the run never gathered", () => {
+    const citations = deliverableCitations(evidence);
+    const merged = mergePptx("Deck", {
+      sections: [{
+        title: "Findings",
+        summary: "Summary",
+        findings: [{ title: "Finding", detail: "Detail", severity: "low", citationIds: ["S9"] }],
+      }],
+    }, citations);
+
+    expect(() => pptxDeliverableInputSchema.parse(merged)).toThrow(/Unknown citation id/);
+  });
+
+  it("produces schema-valid fallbacks for every format", () => {
+    const citations = deliverableCitations(evidence);
+
+    expect(() => docxDeliverableInputSchema.parse(mergeDocx("Note", fallbackDocx("Analysis", citations), citations))).not.toThrow();
+    expect(() => pptxDeliverableInputSchema.parse(mergePptx("Deck", fallbackPptx("Analysis", citations), citations))).not.toThrow();
+    expect(() => xlsxDeliverableInputSchema.parse(mergeXlsx("Book", fallbackXlsx("Analysis", citations), citations))).not.toThrow();
+  });
+
+  it("marks a fallback document as degraded in its own text", () => {
+    const citations = deliverableCitations(evidence);
+
+    expect(fallbackDocx("Analysis", citations).purpose).toMatch(/Structured authoring was unavailable/);
+    expect(fallbackXlsx("Analysis", citations).assumptions[0]).toMatch(/Structured authoring was unavailable/);
   });
 });

@@ -1,7 +1,14 @@
 import type { EvidenceItem } from "./agent.types.js";
-import type { PptxDeliverableInput, XlsxDeliverableInput } from "../deliverables/deliverable-schemas.js";
+import type {
+  AuthoredDocx,
+  AuthoredPptx,
+  AuthoredXlsx,
+  citationSchema,
+} from "../deliverables/deliverable-schemas.js";
+import type { z } from "zod";
 
 export type DeliverableFormat = "docx" | "pptx" | "xlsx";
+export type DeliverableCitation = z.infer<typeof citationSchema>;
 
 const formatPatterns: Array<{ format: Exclude<DeliverableFormat, "docx">; pattern: RegExp }> = [
   { format: "pptx", pattern: /\b(?:pptx|powerpoint|presentation|slide deck|slides)\b/i },
@@ -20,42 +27,76 @@ function clean(value: string, maximum: number) {
   return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, " ").trim().slice(0, maximum) || "Source content unavailable";
 }
 
-function sourceMaterial(evidence: EvidenceItem[]) {
+/**
+ * Resolves evidence records into the citation list a deliverable is bound to.
+ *
+ * Deliberately server-side: the model is shown these ids and may reference
+ * them, but cannot add to them, so every citation in a generated document
+ * corresponds to evidence the run actually collected.
+ */
+export function deliverableCitations(evidence: EvidenceItem[]): DeliverableCitation[] {
   if (evidence.length === 0) throw new Error("Office deliverables require source evidence");
-  const citations = evidence.map((item, index) => ({
+  return evidence.map((item, index) => ({
     id: `S${index + 1}`,
     title: clean(item.title, 160),
     source: clean(item.sourceRef, 500),
     locator: `Evidence ${item.id}`.slice(0, 120),
   }));
-  return { citations, citationIds: citations.map((citation) => citation.id) };
 }
 
-export function presentationInput(task: string, analysis: string, evidence: EvidenceItem[]): PptxDeliverableInput {
-  const { citations, citationIds } = sourceMaterial(evidence);
+// ─── Fallbacks ───────────────────────────────────────────────────────────────
+//
+// Used only when the model fails twice to author a valid body. They produce a
+// minimal, clearly-labelled document rather than failing the run outright —
+// but they are a degraded result, and they say so in the document itself, so
+// nobody mistakes one for a real analysis.
+
+const FALLBACK_NOTICE =
+  "Structured authoring was unavailable for this run, so this document contains the unstructured model analysis only. Treat it as a draft and review it against the cited sources.";
+
+export function fallbackDocx(analysis: string, citations: DeliverableCitation[]): AuthoredDocx {
   return {
-    title: clean(task, 160),
+    purpose: FALLBACK_NOTICE,
+    findings: [{
+      title: "Model analysis",
+      detail: clean(analysis, 1_500),
+      severity: "info",
+      citationIds: citations.slice(0, 8).map((citation) => citation.id),
+    }],
+    recommendation: "No structured recommendation was produced. Review the analysis above against the cited sources.",
+  };
+}
+
+export function fallbackPptx(analysis: string, citations: DeliverableCitation[]): AuthoredPptx {
+  return {
     subtitle: "Evidence-backed review",
     sections: [{
       title: "Analysis",
       summary: clean(analysis, 800),
-      findings: [{ title: "Model-assisted finding", detail: clean(analysis, 900), severity: "info", citationIds: citationIds.slice(0, 8) }],
+      findings: [{
+        title: "Model analysis",
+        detail: clean(analysis, 900),
+        severity: "info",
+        citationIds: citations.slice(0, 8).map((citation) => citation.id),
+      }],
     }],
-    citations,
   };
 }
 
-export function spreadsheetInput(task: string, analysis: string, evidence: EvidenceItem[]): XlsxDeliverableInput {
-  const { citations, citationIds } = sourceMaterial(evidence);
+export function fallbackXlsx(analysis: string, citations: DeliverableCitation[]): AuthoredXlsx {
+  const citationIds = citations.slice(0, 8).map((citation) => citation.id);
   return {
-    title: clean(task, 160),
     sections: [{
       title: "Analysis",
       summary: clean(analysis, 1_500),
-      findings: [{ title: "Model-assisted finding", detail: clean(analysis, 1_500), severity: "info", citationIds: citationIds.slice(0, 8) }],
+      findings: [{
+        title: "Model analysis",
+        detail: clean(analysis, 1_500),
+        severity: "info",
+        citationIds,
+      }],
     }],
-    citations,
-    assumptions: ["Model-assisted findings require human review against the cited source material."],
+    assumptions: [FALLBACK_NOTICE],
     tables: [{
       name: "SourceEvidence",
       title: "Source evidence register",
@@ -72,7 +113,7 @@ export function spreadsheetInput(task: string, analysis: string, evidence: Evide
       unit: "records",
       cachedResult: citations.length,
       assumptions: ["Counts the source records embedded in this workbook."],
-      citationIds: citationIds.slice(0, 8),
+      citationIds,
     }],
   };
 }

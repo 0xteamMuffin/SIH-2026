@@ -9,15 +9,17 @@ import { mostRestrictiveClassification } from "../../lib/data-classification.js"
 import { invokeModelWithFallbacks } from "../../infrastructure/models/model-orchestrator.js";
 import type { ModelImageInput, VisionImageMimeType } from "../../infrastructure/models/model-provider.js";
 import { renderPdfPages } from "../../infrastructure/pdf-renderer/pdf-renderer-client.js";
-import { eligibleRoutingDecision, routingDecisionForPersistedRun, selectModel } from "../../infrastructure/models/model-router.js";
+import { eligibleRoutingDecision, routingDecisionForPersistedRun, selectModel, type RoutingDecision } from "../../infrastructure/models/model-router.js";
 import { runCode } from "../../infrastructure/sandbox/sandbox-client.js";
 import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_REQUESTED_TOPIC } from "../../infrastructure/queue/agent-run-message.js";
 import { createArtifact, findArtifact, getArtifactBounded } from "../artifacts/artifacts.service.js";
 import { extractArtifact } from "../artifacts/artifact-extraction.service.js";
 import { approvalNoteDocx } from "./approval-note.js";
 import { codeRepairMessages, modelMessages } from "./agent-prompts.js";
+import { loadConversationHistory } from "./conversation-history.js";
 import { parseGeneratedCode, sandboxToolResult, type EvidenceItem, type GeneratedCode, type ToolResult } from "./agent.types.js";
-import { presentationInput, selectDeliverableFormat, spreadsheetInput } from "./agent-deliverables.js";
+import { deliverableCitations, fallbackDocx, fallbackPptx, fallbackXlsx, selectDeliverableFormat, type DeliverableCitation, type DeliverableFormat } from "./agent-deliverables.js";
+import { authoringMessages, authoringRepairMessages, mergeDocx, mergePptx, mergeXlsx, parseAuthored } from "./deliverable-authoring.js";
 import { generatePptx, PPTX_MIME_TYPE } from "../deliverables/pptx-generator.js";
 import { generateXlsx, XLSX_MIME_TYPE } from "../deliverables/xlsx-generator.js";
 import type { AuthUser } from "../../middleware/auth.js";
@@ -143,6 +145,69 @@ async function saveEvidence(runId: string, kind: EvidenceKind, artifactId: strin
   const item = existing ?? await prisma.evidence.create({ data: { runId, kind, artifactId, sourceRef, title, summary, facts: toJson(facts) } });
   return { id: item.id, sourceRef, title, summary, facts };
 }
+/**
+ * Has the model write a deliverable body, with one repair attempt.
+ *
+ * A malformed body is a routine model failure rather than a run failure, so
+ * two misses fall back to a minimal document that states plainly that it is
+ * degraded. Failing the whole run here would discard analysis that is already
+ * correct and already paid for.
+ */
+async function authorDeliverableContent(input: {
+  format: DeliverableFormat;
+  task: string;
+  analysis: string;
+  sourceText: string | undefined;
+  citations: DeliverableCitation[];
+  runId: string;
+  decision: RoutingDecision;
+  classification: DataClassification;
+  tokenBudget: AgentRuntimeState["tokenBudget"];
+  signal: AbortSignal;
+}): Promise<{ content: unknown; authored: boolean }> {
+  const { format, task, analysis, sourceText, citations } = input;
+  const invoke = (messages: { system: string; prompt: string }) => invokeModelWithFallbacks({
+    runId: input.runId,
+    decision: input.decision,
+    classification: input.classification,
+    ...messages,
+    signal: input.signal,
+    tokenBudget: input.tokenBudget,
+  });
+
+  let lastOutput = "";
+  let lastReason = "";
+  // A response stopped by the output cap is truncated rather than malformed,
+  // and needs to be told to produce less — not to fix its syntax.
+  let truncated = false;
+  try {
+    const first = await invoke(authoringMessages(format, task, analysis, sourceText, citations));
+    lastOutput = first.response.text;
+    truncated = first.response.finishReason === "length";
+    return { content: parseAuthored(format, lastOutput), authored: true };
+  } catch (error) {
+    if (input.signal.aborted || isTerminalModelError(error)) throw error;
+    lastReason = error instanceof Error ? error.message : "Unknown validation failure";
+  }
+
+  try {
+    const repaired = await invoke(
+      authoringRepairMessages(format, task, analysis, sourceText, citations, lastOutput, lastReason, truncated),
+    );
+    return { content: parseAuthored(format, repaired.response.text), authored: true };
+  } catch (error) {
+    if (input.signal.aborted || isTerminalModelError(error)) throw error;
+    logger.warn({ runId: input.runId, format, reason: lastReason, truncated }, "deliverable authoring fell back to the minimal template");
+  }
+
+  const content = format === "pptx"
+    ? fallbackPptx(analysis, citations)
+    : format === "xlsx"
+      ? fallbackXlsx(analysis, citations)
+      : fallbackDocx(analysis, citations);
+  return { content, authored: false };
+}
+
 function knowledgePrompt(citations: KnowledgeSearchCitation[]) {
   return citations.map((citation, index) => `[K${index + 1}] ${citation.title}\nSource: ${citation.sourceRef}\n${citation.text}`).join("\n\n");
 }
@@ -156,7 +221,7 @@ function mutableRunWhere(runId: string, actor: Pick<AuthUser, "id" | "role">): P
     ? { id: runId }
     : { id: runId, workspace: { members: { some: { userId: actor.id, role: { in: [UserRole.ADMIN, UserRole.OPERATOR] } } } } };
 }
-export async function createRun(input: { workspaceId: string; userId: string; task: string; dataClassification: DataClassification; artifactId?: string }) {
+export async function createRun(input: { workspaceId: string; userId: string; task: string; dataClassification: DataClassification; artifactId?: string; conversationId?: string }) {
   let classification = input.dataClassification;
   if (input.artifactId) {
     const source = await findArtifact(input.artifactId);
@@ -186,7 +251,7 @@ export async function createRun(input: { workspaceId: string; userId: string; ta
     if (workspaceActiveRuns >= 1) throw new AppError(409, "Workspace already has an active agent run", "WORKSPACE_RUN_CONCURRENCY_LIMIT_EXCEEDED");
     const userActiveRuns = await transaction.agentRun.count({ where: { requestedBy: input.userId, activeWorkspaceId: { not: null } } });
     if (userActiveRuns >= env.AGENT_MAX_CONCURRENT_RUNS_PER_USER) throw new AppError(429, "User concurrent agent-run limit exceeded", "USER_RUN_CONCURRENCY_LIMIT_EXCEEDED");
-    const created = await transaction.agentRun.create({ data: { id: runId, workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, sourceArtifactId: input.artifactId, activeWorkspaceId: input.workspaceId, maxTurns: env.AGENT_MAX_TURNS, maxToolCalls: env.AGENT_MAX_TOOL_CALLS, deadlineAt: new Date(Date.now() + env.AGENT_RUN_DEADLINE_MS), state: { version: 1, phase: "SOURCE", turn: 0, phaseStarted: false, tokenBudget } } });
+    const created = await transaction.agentRun.create({ data: { id: runId, workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, sourceArtifactId: input.artifactId, conversationId: input.conversationId ?? null, activeWorkspaceId: input.workspaceId, maxTurns: env.AGENT_MAX_TURNS, maxToolCalls: env.AGENT_MAX_TOOL_CALLS, deadlineAt: new Date(Date.now() + env.AGENT_RUN_DEADLINE_MS), state: { version: 1, phase: "SOURCE", turn: 0, phaseStarted: false, tokenBudget } } });
     await transaction.outboxEvent.create({ data: { topic: AGENT_RUN_REQUESTED_TOPIC, aggregateId: runId, payload: toJson({ runId }) } });
     return created;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
@@ -354,19 +419,33 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
         const citations = await searchAgentKnowledge({ workspaceId: run.workspaceId, classification: run.dataClassification, query: searchInput.query, signal });
         return { ok: true, summary: citations.length > 0 ? `Retrieved ${citations.length} knowledge citation(s)` : "No relevant knowledge citations found", data: { citations } };
       }, signal, toolOptions);
-      if (!searched.ok) throw new Error(searched.summary);
-      const citations = (searched.data?.citations ?? []) as KnowledgeSearchCitation[];
+      // Knowledge search enriches a run; it does not define it. A provider
+      // rate limit or outage here used to fail the whole task even when the
+      // user's own attached document was already read and sufficient, so the
+      // failure is recorded as a tool step and the run continues without
+      // citations.
+      if (!searched.ok) {
+        logger.warn({ runId: run.id, reason: searched.summary }, "knowledge search failed; continuing without citations");
+      }
+      const citations = (searched.ok ? searched.data?.citations ?? [] : []) as KnowledgeSearchCitation[];
       for (const citation of citations) {
         evidence.push(await saveEvidence(run.id, EvidenceKind.SOURCE, citation.artifactId, citation.sourceRef, citation.title, citation.text.slice(0, 800), [citation.text]));
       }
       if (citations.length > 0) sourceText = [sourceText, knowledgePrompt(citations)].filter(Boolean).join("\n\nRetrieved knowledge citations:\n");
-      if (sourcePhase) await appendMessage(run.id, state.turn, "tool", { tool: "knowledge.search", status: "completed", summary: searched.summary });
+      if (sourcePhase) await appendMessage(run.id, state.turn, "tool", { tool: "knowledge.search", status: searched.ok ? "completed" : "failed", summary: searched.summary });
     }
     if (sourcePhase) await finishPhase();
     let analysis = "No model analysis was required.";
     let generatedCode: GeneratedCode | undefined;
     let selectedProfile = decision.profile;
-    const messages = modelMessages(run.task, decision.capability, sourceText, sourceLimitation);
+    // Earlier turns of this chat, so a follow-up can build on what was already
+    // asked and answered instead of starting cold.
+    const history = await loadConversationHistory({
+      workspaceId: run.workspaceId,
+      conversationId: run.conversationId,
+      excludeRunId: run.id,
+    });
+    const messages = modelMessages(run.task, decision.capability, sourceText, sourceLimitation, history);
     const analyzePhase = await startPhase("ANALYZE", "Producing bounded model output");
     const analyzed = await executeRunTool(run.id, "model.analyze", { model: decision.profile.id, capability: decision.capability }, async () => {
       const selected = await invokeModelWithFallbacks({ runId: run.id, decision, classification: run.dataClassification, ...messages, images: modelImages, signal, tokenBudget: state.tokenBudget });
@@ -379,7 +458,7 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
             runId: run.id,
             decision: { ...decision, profile: selectedProfile },
             classification: run.dataClassification,
-            ...codeRepairMessages(run.task, selected.response.text, sourceText, sourceLimitation),
+            ...codeRepairMessages(run.task, selected.response.text, sourceText, sourceLimitation, history),
             signal,
             tokenBudget: state.tokenBudget,
           });
@@ -449,21 +528,38 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
     } else if (sourceEvidence.length > 0 && (sourceArtifactId || decision.capability === "document")) {
       const evidenceIds = sourceEvidence.map((item) => item.id);
       const format = selectDeliverableFormat(run.task);
+      const citations = deliverableCitations(sourceEvidence);
+      // The model writes the document body before the tool runs, so the
+      // authored content is what gets recorded as the tool's input and is
+      // auditable alongside every other call in the run.
+      const authored = await authorDeliverableContent({
+        format,
+        task: run.task,
+        analysis,
+        sourceText,
+        citations,
+        runId: run.id,
+        decision: { ...decision, profile: selectedProfile },
+        classification: run.dataClassification,
+        tokenBudget: state.tokenBudget,
+        signal,
+      });
       const toolName = format === "pptx" ? "deliverable.createPresentation" : format === "xlsx" ? "deliverable.createSpreadsheet" : "deliverable.createApprovalNote";
-      const toolInput = format === "docx" ? { format } : { format, evidenceIds };
+      const toolInput = { format, evidenceIds, content: authored.content };
       const delivered = await executeRunTool(run.id, toolName, toolInput, async () => {
         signal.throwIfAborted();
         const output = format === "pptx"
-          ? { bytes: await generatePptx(presentationInput(run.task, analysis, sourceEvidence)), filename: `presentation-${run.id}.pptx`, mimeType: PPTX_MIME_TYPE, summary: "Generated cited PPTX" }
+          ? { bytes: await generatePptx(mergePptx(run.task, authored.content as never, citations)), filename: `presentation-${run.id}.pptx`, mimeType: PPTX_MIME_TYPE, summary: "Generated cited PPTX" }
           : format === "xlsx"
-            ? { bytes: await generateXlsx(spreadsheetInput(run.task, analysis, sourceEvidence)), filename: `workbook-${run.id}.xlsx`, mimeType: XLSX_MIME_TYPE, summary: "Generated cited XLSX" }
-            : { bytes: Buffer.from(await approvalNoteDocx(run.task, sourceEvidence)), filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", summary: "Generated approval-note DOCX" };
+            ? { bytes: await generateXlsx(mergeXlsx(run.task, authored.content as never, citations)), filename: `workbook-${run.id}.xlsx`, mimeType: XLSX_MIME_TYPE, summary: "Generated cited XLSX" }
+            : { bytes: Buffer.from(await approvalNoteDocx(mergeDocx(run.task, authored.content as never, citations))), filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", summary: "Generated approval-note DOCX" };
         signal.throwIfAborted();
         const kind = format === "pptx" ? ArtifactKind.GENERATED_PPTX : format === "xlsx" ? ArtifactKind.GENERATED_XLSX : ArtifactKind.GENERATED_DOCX;
         const artifact = await createArtifact({ workspaceId: run.workspaceId, userId: run.requestedBy, filename: output.filename, mimeType: output.mimeType, kind, classification: run.dataClassification, bytes: output.bytes, idempotencyKey: `run-${run.id}-${format}` });
         result.artifact = artifact;
         return { ok: true, summary: output.summary, data: { artifactId: artifact.id } };
       }, signal, toolOptions);
+      result.deliverableAuthoring = authored.authored ? "model" : "fallback";
       const artifactId = delivered.data?.artifactId;
       if (typeof artifactId === "string" && !result.artifact) {
         const artifact = await findArtifact(artifactId);

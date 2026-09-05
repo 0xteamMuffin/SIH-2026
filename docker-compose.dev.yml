@@ -7,6 +7,15 @@
 # as root for bind-mount convenience.
 services:
   backend:
+    # The Electron client runs on the host, not in the compose network, so the
+    # API has to be reachable from outside. `internal` is a closed network and
+    # cannot publish, so the backend joins `edge` as well — the same pattern
+    # the frontend already uses for its browser port.
+    #
+    # Deliberately dev-only. The sovereign stack publishes nothing and keeps
+    # the backend on `internal` alone.
+    ports: ["4000:4000"]
+    networks: [internal, edge]
     build:
       context: ./backend
       dockerfile: Dockerfile.dev

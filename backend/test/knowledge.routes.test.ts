@@ -172,7 +172,10 @@ describe("knowledge routes", () => {
     });
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({ error: { code: "INVALID_INPUT", message: "Request validation failed" } });
+    // Authenticated callers are told which field failed; the bare message is
+    // reserved for unauthenticated endpoints.
+    expect(response.body.error.code).toBe("INVALID_INPUT");
+    expect(response.body.error.message).toMatch(/^Request validation failed — /);
     expect(knowledgeServiceMock.createKnowledgeQuery).not.toHaveBeenCalled();
   });
 

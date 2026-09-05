@@ -16,7 +16,9 @@
     "test:acceptance": "node ../ops/backend-acceptance.mjs",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate deploy"
+    "prisma:migrate": "prisma migrate deploy",
+    "verify:model-tools": "node ../ops/verify-model-tools.mjs",
+    "verify:deliverables": "node ../ops/verify-deliverable-authoring.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.735.0",
@@ -38,7 +40,8 @@
     "pino-http": "^10.3.0",
     "pptxgenjs": "^4.0.1",
     "prisma": "6.19.3",
-    "zod": "^3.24.2"
+    "zod": "^3.24.2",
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "@scalar/openapi-parser": "^0.29.0",

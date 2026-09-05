@@ -38,6 +38,16 @@ Lower priority numbers are selected first. Other matching profiles become ordere
 
 The development registry currently assigns separate free profiles for general documents, deeper reasoning, coding, vision, text embeddings, and multimodal embeddings. Free model availability changes over time, so these entries are configuration rather than application constants.
 
+## Tool calling
+
+`supportsTools` declares whether a profile can be given tool definitions. It defaults to `false`, so a profile is only offered tools once someone has confirmed the provider handles them; requesting tools from a profile without the flag fails with `MODEL_TOOLS_UNSUPPORTED` before any request is sent.
+
+The flag is a claim about provider behaviour, and both kinds of error are costly: a false positive fails at runtime with a confusing message, and a false negative silently downgrades a capable model. `node ops/verify-model-tools.mjs [profileId ...]` settles it by probing each configured profile with a trivial tool and reporting where the registry disagrees with what the provider actually did. It exits non-zero on any disagreement.
+
+The probe needs network access and provider credentials, so it is a development check and is deliberately not part of the sovereign verification suite. Rate limits and 5xx responses are reported as inconclusive rather than as a refusal, so a throttled provider is never mistaken for one that lacks support.
+
+Tool-calling quality varies far more than tool-calling availability. Smaller local models frequently accept the parameter, then emit malformed arguments or ignore the tools entirely, so the agent loop validates every set of arguments against the same schema the model was shown and treats a bad call as a recoverable turn rather than a run failure.
+
 ## Pricing metadata
 
 Optional `pricing` metadata records `version`, `currency`, `inputPerMillionTokens`, and `outputPerMillionTokens`. Successful model invocations with complete token usage persist an estimated integer micro-USD cost together with the pricing version and currency used for the estimate. Profiles without pricing retain a null estimate; the backend does not invent rates. Model IDs marked `:free` and `openrouter/free` must declare versioned zero input and output rates, producing an estimated cost of zero.

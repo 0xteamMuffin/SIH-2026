@@ -1,25 +1,43 @@
 import { ToolRiskLevel } from "@prisma/client";
 import { z } from "zod";
+import { authoredDocxSchema, authoredPptxSchema, authoredXlsxSchema } from "../deliverables/deliverable-schemas.js";
 
 const artifactReadInput = z.object({
-  artifactId: z.string().uuid(),
-  extractionVersion: z.string().min(1).max(64),
+  artifactId: z.string().uuid().describe("UUID of the artifact to read."),
+  extractionVersion: z.string().min(1).max(64).describe("Extraction schema version reported for the artifact."),
 }).strict();
 
-const knowledgeSearchInput = z.object({ query: z.string().trim().min(1).max(20_000) }).strict();
+const knowledgeSearchInput = z.object({
+  query: z.string().trim().min(1).max(20_000).describe("Natural-language search query."),
+}).strict();
 
-const approvalNoteInput = z.object({ format: z.literal("docx") }).strict();
-const presentationInput = z.object({ format: z.literal("pptx"), evidenceIds: z.array(z.string().uuid()).min(1).max(60) }).strict();
-const spreadsheetInput = z.object({ format: z.literal("xlsx"), evidenceIds: z.array(z.string().uuid()).min(1).max(200) }).strict();
+// `content` carries the document the model wrote. Citations are not part of
+// it: they are resolved server-side from the evidence referenced by
+// `evidenceIds`, so a fabricated source cannot reach a generated document.
+const approvalNoteInput = z.object({
+  format: z.literal("docx").describe("Output format. Always 'docx'."),
+  evidenceIds: z.array(z.string().uuid()).min(1).max(200).describe("Evidence records to cite, from earlier tool results in this run."),
+  content: authoredDocxSchema.describe("The approval note body: purpose, findings with severities, recommendation, and any conditions."),
+}).strict();
+const presentationInput = z.object({
+  format: z.literal("pptx").describe("Output format. Always 'pptx'."),
+  evidenceIds: z.array(z.string().uuid()).min(1).max(60).describe("Evidence records to cite, from earlier tool results in this run."),
+  content: authoredPptxSchema.describe("The deck body: one section per slide topic, each with findings and their severities."),
+}).strict();
+const spreadsheetInput = z.object({
+  format: z.literal("xlsx").describe("Output format. Always 'xlsx'."),
+  evidenceIds: z.array(z.string().uuid()).min(1).max(200).describe("Evidence records to cite, from earlier tool results in this run."),
+  content: authoredXlsxSchema.describe("The workbook body: data tables with typed columns, and calculations whose formulas reference those tables."),
+}).strict();
 const codeOutputInput = z.object({
-  language: z.enum(["javascript", "python"]),
-  code: z.string().min(1).max(100_000),
-  explanation: z.string().min(1).max(20_000),
+  language: z.enum(["javascript", "python"]).describe("Language the code is written in."),
+  code: z.string().min(1).max(100_000).describe("Complete source code to save."),
+  explanation: z.string().min(1).max(20_000).describe("Plain-language explanation of what the code does."),
 }).strict();
 
 const sandboxExecuteInput = z.object({
-  language: z.enum(["javascript", "python"]),
-  code: z.string().max(100_000),
+  language: z.enum(["javascript", "python"]).describe("Runtime to execute the program with."),
+  code: z.string().max(100_000).describe("Self-contained program. It has no network access and no filesystem beyond a temporary directory."),
 }).strict();
 
 const toolFailure = z.object({
@@ -62,14 +80,71 @@ const sandboxExecuteOutput = z.union([toolFailure, z.object({
   outputTruncated: z.boolean().optional(),
 }).passthrough()]);
 
+/**
+ * Every tool the agent may call.
+ *
+ * `description` is what the model actually reads when deciding between tools,
+ * so it is kept beside the schema rather than in a separate table where the
+ * two could drift. Descriptions state when to use a tool and what it returns,
+ * because that is what smaller local models need in order to route correctly.
+ */
 export const agentToolRegistry = {
-  "artifact.read": { input: artifactReadInput, output: artifactReadOutput, risk: ToolRiskLevel.LOW, requiresApproval: false },
-  "knowledge.search": { input: knowledgeSearchInput, output: knowledgeSearchOutput, risk: ToolRiskLevel.LOW, requiresApproval: false },
-  "deliverable.createApprovalNote": { input: approvalNoteInput, output: approvalNoteOutput, risk: ToolRiskLevel.MEDIUM, requiresApproval: false },
-  "deliverable.createPresentation": { input: presentationInput, output: artifactOutput, risk: ToolRiskLevel.MEDIUM, requiresApproval: false },
-  "deliverable.createSpreadsheet": { input: spreadsheetInput, output: artifactOutput, risk: ToolRiskLevel.MEDIUM, requiresApproval: false },
-  "code.persistOutput": { input: codeOutputInput, output: artifactOutput, risk: ToolRiskLevel.LOW, requiresApproval: false },
-  "sandbox.execute": { input: sandboxExecuteInput, output: sandboxExecuteOutput, risk: ToolRiskLevel.HIGH, requiresApproval: true },
+  "artifact.read": {
+    description:
+      "Read the extracted text of an uploaded document by artifact id. Use this to inspect a source document before analysing it. Returns the document's text and its character count.",
+    input: artifactReadInput,
+    output: artifactReadOutput,
+    risk: ToolRiskLevel.LOW,
+    requiresApproval: false,
+  },
+  "knowledge.search": {
+    description:
+      "Search the organisation's indexed manuals, SOPs and past correspondence for passages relevant to a query. Use this to ground an answer in internal sources. Returns up to eight cited passages with their source references.",
+    input: knowledgeSearchInput,
+    output: knowledgeSearchOutput,
+    risk: ToolRiskLevel.LOW,
+    requiresApproval: false,
+  },
+  "deliverable.createApprovalNote": {
+    description:
+      "Generate a Word (.docx) approval note. You supply the purpose, the findings with the severity each one warrants, the recommendation, and any conditions. Returns the id of the stored document.",
+    input: approvalNoteInput,
+    output: approvalNoteOutput,
+    risk: ToolRiskLevel.MEDIUM,
+    requiresApproval: false,
+  },
+  "deliverable.createPresentation": {
+    description:
+      "Generate a PowerPoint (.pptx) deck from cited evidence. Use this when the user asks for slides or a presentation. Returns the id of the stored document.",
+    input: presentationInput,
+    output: artifactOutput,
+    risk: ToolRiskLevel.MEDIUM,
+    requiresApproval: false,
+  },
+  "deliverable.createSpreadsheet": {
+    description:
+      "Generate an Excel (.xlsx) workbook. You supply the data tables and the formulas that operate on them, so put the actual figures from the source material into rows rather than listing the sources. Returns the id of the stored document.",
+    input: spreadsheetInput,
+    output: artifactOutput,
+    risk: ToolRiskLevel.MEDIUM,
+    requiresApproval: false,
+  },
+  "code.persistOutput": {
+    description:
+      "Save generated source code as a downloadable file for the user, together with an explanation of what it does. Use this once the code is final. Does not run the code.",
+    input: codeOutputInput,
+    output: artifactOutput,
+    risk: ToolRiskLevel.LOW,
+    requiresApproval: false,
+  },
+  "sandbox.execute": {
+    description:
+      "Run a short Python or JavaScript program in an isolated sandbox with no network access, and return its stdout, stderr and exit code. Use this to verify code or perform a calculation. Requires human approval before it runs.",
+    input: sandboxExecuteInput,
+    output: sandboxExecuteOutput,
+    risk: ToolRiskLevel.HIGH,
+    requiresApproval: true,
+  },
 } as const;
 
 export type AgentToolName = keyof typeof agentToolRegistry;
