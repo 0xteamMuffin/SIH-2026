@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { env } from "../src/config/env.js";
 import { modelProfiles, parseModelConfiguration, type ModelProfile } from "../src/infrastructure/models/model-registry.js";
-import { routingDecisionForPersistedRun, selectModel } from "../src/infrastructure/models/model-router.js";
+import { requiredCapability, routeForTurn, selectModel, visionRequiredForSource } from "../src/infrastructure/models/model-router.js";
 
 const profiles: ModelProfile[] = [
   { id: "general", providerId: "remote", location: "remote", baseUrl: "https://models.example/v1", modelId: "vendor/general", capabilities: ["general", "document"], priority: 20, enabled: true, sovereign: false, maxOutputTokens: 1_024 },
@@ -150,6 +150,33 @@ describe("model registry", () => {
     ]);
   });
 
+  it("does not claim one model both supports and does not support tools", () => {
+    // Two profiles can point at the same underlying model; if their tool
+    // support disagrees, one of them is wrong and the router will believe it.
+    const configured = parseModelConfiguration(readFileSync(new URL("../config/models.json", import.meta.url), "utf8"));
+    const byModel = new Map<string, Set<boolean>>();
+    for (const profile of configured) {
+      const key = `${profile.providerId}/${profile.modelId}`;
+      byModel.set(key, (byModel.get(key) ?? new Set()).add(profile.supportsTools !== false));
+    }
+
+    expect([...byModel].filter(([, flags]) => flags.size > 1).map(([key]) => key)).toEqual([]);
+  });
+
+  it("keeps every task capability routable with tools, in both deployment modes", () => {
+    // The agent loop offers tools on every turn, so a capability whose only
+    // profiles cannot call tools is a capability no run can use. Sovereign
+    // deployments are checked separately because they see local profiles only,
+    // which is the smaller pool and the one that ships on-premise.
+    const configured = parseModelConfiguration(readFileSync(new URL("../config/models.json", import.meta.url), "utf8"));
+    const taskCapabilities = ["general", "vision"] as const;
+    const routable = (pool: ModelProfile[]) => taskCapabilities.filter((capability) =>
+      pool.some((profile) => profile.enabled && profile.supportsTools !== false && profile.capabilities.includes(capability)));
+
+    expect(routable(configured)).toEqual([...taskCapabilities]);
+    expect(routable(configured.filter((profile) => profile.location === "local"))).toEqual([...taskCapabilities]);
+  });
+
   it("keeps every configured free profile explicitly zero-cost and versioned", () => {
     const configured = parseModelConfiguration(readFileSync(new URL("../config/models.json", import.meta.url), "utf8"));
     const free = configured.filter((profile) => profile.modelId.endsWith(":free") || profile.modelId === "openrouter/free");
@@ -160,18 +187,53 @@ describe("model registry", () => {
       && profile.pricing.outputPerMillionTokens === 0)).toBe(true);
   });
 
-  it("routes capabilities by deterministic priority with ordered fallbacks", () => {
-    const decision = selectModel("Review this scanned drawing", true, profiles);
+  it("routes by requirement and priority with ordered fallbacks", () => {
+    const decision = selectModel({ vision: true, tools: true }, profiles);
 
     expect(decision.capability).toBe("vision");
     expect(decision.profile.id).toBe("vision-primary");
     expect(decision.fallbacks.map((profile) => profile.id)).toEqual(["vision-fallback"]);
   });
 
-  it("routes coding tasks independently from attachments", () => {
-    const codeProfile: ModelProfile = { id: "code", providerId: "local", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "coder", capabilities: ["code"], priority: 10, enabled: true, sovereign: true, maxOutputTokens: 2_048 };
+  it("will not offer a profile that cannot call the tools it would be given", () => {
+    // The agent loop offers tools on every turn, so a profile that cannot use
+    // them cannot run a turn at all. Selecting one and failing at the provider
+    // wastes the run on a configuration detail known up front.
+    const toolless: ModelProfile = { ...profiles[1]!, id: "vision-toolless", priority: 1, supportsTools: false };
 
-    expect(selectModel("Write and test Python code", true, [...profiles, codeProfile]).profile.id).toBe("code");
+    expect(selectModel({ vision: true, tools: true }, [toolless, ...profiles]).profile.id).toBe("vision-primary");
+    // Without the requirement it is the best-priority candidate, which is what
+    // makes the line above a filter rather than an accident of ordering.
+    expect(selectModel({ vision: true, tools: false }, [toolless, ...profiles]).profile.id).toBe("vision-toolless");
+  });
+
+  it("requires visual input for an image, which has no text to read", () => {
+    expect(visionRequiredForSource({ mimeType: "image/png" })).toBe(true);
+    expect(visionRequiredForSource({ mimeType: "image/jpeg", extractedCharacters: 0 })).toBe(true);
+  });
+
+  it("requires visual input for a document that extracted to nothing", () => {
+    // A PDF that yields no text is a scan: the words are pixels. Answering
+    // from the empty extraction would describe a blank page.
+    expect(visionRequiredForSource({ mimeType: "application/pdf", extractedCharacters: 0 })).toBe(true);
+    expect(visionRequiredForSource({ mimeType: "application/pdf", extractedCharacters: 4_000 })).toBe(false);
+  });
+
+  it("does not require visual input when extraction has not been attempted", () => {
+    // Unknown is not the same as empty; the agent can still ask to look.
+    expect(visionRequiredForSource({ mimeType: "application/pdf" })).toBe(false);
+  });
+
+  it("derives requirements from the input, never from words in the request", () => {
+    // The words that used to drive routing are all present here, on a
+    // document whose text extracted perfectly well.
+    const requirements = {
+      vision: visionRequiredForSource({ mimeType: "application/pdf", extractedCharacters: 8_000 }),
+      tools: true,
+    };
+
+    expect(requiredCapability(requirements)).toBe("general");
+    expect(selectModel(requirements, profiles).profile.id).toBe("general");
   });
 
   it("loads the configured registry and excludes remote profiles when disabled", () => {
@@ -185,19 +247,47 @@ describe("model registry", () => {
     }
   });
 
-  it("keeps a persisted primary first and reconstructs current ordered fallbacks", () => {
-    const decision = routingDecisionForPersistedRun({ taskCapability: "vision", modelProfile: "vision-fallback", modelReason: "persisted", dataClassification: DataClassification.PUBLIC }, profiles);
+  it("keeps the profile a run is already using when it still meets the requirements", () => {
+    const decision = routeForTurn(
+      { requirements: { vision: true, tools: true }, classification: DataClassification.PUBLIC, preferredProfileId: "vision-fallback" },
+      profiles,
+    );
 
     expect(decision.profile.id).toBe("vision-fallback");
     expect(decision.fallbacks.map((profile) => profile.id)).toEqual(["vision-primary"]);
   });
 
-  it("uses an eligible current fallback when a persisted remote primary is filtered out", () => {
-    const local: ModelProfile = { ...profiles[0], id: "local-general", providerId: "local", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "local/general", sovereign: true };
-    const decision = routingDecisionForPersistedRun({ taskCapability: "general", modelProfile: "remote-general", modelReason: "persisted", dataClassification: DataClassification.INTERNAL }, [local]);
+  it("takes the profile away from a run once the requirements outgrow it", () => {
+    // This is what happens mid-run when reading a document reveals a scan:
+    // the text profile in hand cannot see, so routing moves on without it.
+    const decision = routeForTurn(
+      { requirements: { vision: true, tools: true }, classification: DataClassification.PUBLIC, preferredProfileId: "general" },
+      profiles,
+    );
+
+    expect(decision.profile.id).toBe("vision-primary");
+    expect(decision.reason).toContain("does not provide visual input");
+  });
+
+  it("never lets a requirement override the data-classification policy", () => {
+    const local: ModelProfile = { ...profiles[0]!, id: "local-general", providerId: "local", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "local/general", sovereign: true };
+    const decision = routeForTurn(
+      { requirements: { vision: false, tools: true }, classification: DataClassification.INTERNAL, preferredProfileId: "remote-general" },
+      [local, ...profiles],
+    );
 
     expect(decision.profile.id).toBe("local-general");
-    expect(decision.reason).toContain("no longer eligible");
+    expect(decision.profile.location).toBe("local");
+  });
+
+  it("fails rather than routing restricted data to a remote profile", () => {
+    // Only a remote profile can see, and the data may not leave. Refusing is
+    // the required outcome; degrading to a text model that answers about an
+    // empty page would be worse than an error.
+    expect(() => routeForTurn(
+      { requirements: { vision: true, tools: true }, classification: DataClassification.CONFIDENTIAL },
+      profiles,
+    )).toThrow(/data policy/);
   });
 
   it("excludes optional providers whose endpoint or credential is absent", () => {

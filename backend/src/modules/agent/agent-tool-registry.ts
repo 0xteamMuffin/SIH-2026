@@ -7,6 +7,10 @@ const artifactReadInput = z.object({
   extractionVersion: z.string().min(1).max(64).describe("Extraction schema version reported for the artifact."),
 }).strict();
 
+const artifactInspectInput = z.object({
+  reason: z.string().trim().min(1).max(500).describe("What the extracted text is missing or getting wrong that looking at the document would settle."),
+}).strict();
+
 const knowledgeSearchInput = z.object({
   query: z.string().trim().min(1).max(20_000).describe("Natural-language search query."),
 }).strict();
@@ -35,6 +39,22 @@ const codeOutputInput = z.object({
   explanation: z.string().min(1).max(20_000).describe("Plain-language explanation of what the code does."),
 }).strict();
 
+/**
+ * How the agent declares it is finished.
+ *
+ * Terminating through a tool rather than by trailing off in prose makes "done"
+ * explicit and structured: the loop never has to guess whether a reply was an
+ * answer or a step towards one, and the final answer arrives in a known shape.
+ */
+const finalAnswerInput = z.object({
+  answer: z.string().trim().min(1).max(20_000).describe(
+    "The complete answer to the user's question, as Markdown prose. State the findings and figures. Do not restate the code you ran, the tools you called, or the steps you took — the user sees those separately.",
+  ),
+  confidence: z.enum(["high", "medium", "low"]).describe("How well the gathered evidence supports this answer."),
+  unresolved: z.array(z.string().max(500)).max(10).optional()
+    .describe("Anything the evidence could not settle. State these rather than guessing."),
+}).strict();
+
 const sandboxExecuteInput = z.object({
   language: z.enum(["javascript", "python"]).describe("Runtime to execute the program with."),
   code: z.string().max(100_000).describe("Self-contained program. It has no network access and no filesystem beyond a temporary directory."),
@@ -50,6 +70,11 @@ const artifactReadOutput = z.union([toolFailure, z.object({
   ok: z.literal(true),
   summary: z.string(),
   data: z.object({ characters: z.number().int().nonnegative(), text: z.string() }).passthrough(),
+}).passthrough()]);
+const artifactInspectOutput = z.union([toolFailure, z.object({
+  ok: z.literal(true),
+  summary: z.string(),
+  data: z.object({ pages: z.number().int().nonnegative() }).passthrough(),
 }).passthrough()]);
 const knowledgeSearchOutput = z.union([toolFailure, z.object({
   ok: z.literal(true),
@@ -70,6 +95,7 @@ const approvalNoteOutput = z.union([toolFailure, z.object({
   data: z.object({ artifactId: z.string().uuid() }).passthrough(),
 }).passthrough()]);
 const artifactOutput = approvalNoteOutput;
+const finalAnswerOutput = z.object({ ok: z.literal(true), summary: z.string() }).passthrough();
 const sandboxExecuteOutput = z.union([toolFailure, z.object({
   ok: z.literal(true),
   summary: z.string(),
@@ -94,6 +120,14 @@ export const agentToolRegistry = {
       "Read the extracted text of an uploaded document by artifact id. Use this to inspect a source document before analysing it. Returns the document's text and its character count.",
     input: artifactReadInput,
     output: artifactReadOutput,
+    risk: ToolRiskLevel.LOW,
+    requiresApproval: false,
+  },
+  "artifact.inspectVisually": {
+    description:
+      "Look at the source document as an image instead of reading its text. Use this when the extracted text is empty, garbled, or does not describe what the document actually shows — a scan, a photograph, a stamped form, or an engineering drawing. The pages are put in front of you on the next turn.",
+    input: artifactInspectInput,
+    output: artifactInspectOutput,
     risk: ToolRiskLevel.LOW,
     requiresApproval: false,
   },
@@ -134,6 +168,14 @@ export const agentToolRegistry = {
       "Save generated source code as a downloadable file for the user, together with an explanation of what it does. Use this once the code is final. Does not run the code.",
     input: codeOutputInput,
     output: artifactOutput,
+    risk: ToolRiskLevel.LOW,
+    requiresApproval: false,
+  },
+  "final.answer": {
+    description:
+      "Finish the task and return the answer to the user. Call this when you have gathered enough evidence, or when further tool calls cannot resolve the question. This ends the run, so call it exactly once and only when you are done.",
+    input: finalAnswerInput,
+    output: finalAnswerOutput,
     risk: ToolRiskLevel.LOW,
     requiresApproval: false,
   },

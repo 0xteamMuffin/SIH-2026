@@ -1,42 +1,45 @@
 import { z } from "zod";
 import { AppError } from "../../lib/errors.js";
 
-export const runtimePhaseSchema = z.enum(["SOURCE", "ANALYZE", "ACTION", "FINALIZE"]);
 const tokenBudgetSchema = z.object({
   maxInputTokens: z.number().int().positive(),
   maxOutputTokens: z.number().int().positive(),
   maxTotalTokens: z.number().int().positive(),
 }).strict();
+/**
+ * A run's resumable position.
+ *
+ * The agentic loop has no phases: it iterates until the model finishes, so the
+ * only thing worth checkpointing is how many iterations have completed. A
+ * resumed run rebuilds everything else from the persisted transcript.
+ */
 const runtimeStateSchema = z.object({
-  version: z.literal(1),
-  phase: runtimePhaseSchema,
-  turn: z.number().int().nonnegative(),
-  phaseStarted: z.boolean(),
+  version: z.literal(2),
+  iteration: z.number().int().nonnegative(),
   tokenBudget: tokenBudgetSchema.optional(),
 }).strict();
 
 export type ModelTokenBudget = z.infer<typeof tokenBudgetSchema>;
 export type AgentRuntimeState = Omit<z.infer<typeof runtimeStateSchema>, "tokenBudget"> & { tokenBudget: ModelTokenBudget };
 
+/**
+ * Reads a run's state, falling back to a fresh one.
+ *
+ * A state written by an earlier version no longer parses, which is deliberate:
+ * such a run restarts from iteration zero rather than resuming into a shape
+ * the loop cannot interpret.
+ */
 export function runtimeState(value: unknown, tokenBudget: ModelTokenBudget): AgentRuntimeState {
   const parsed = runtimeStateSchema.safeParse(value);
   return parsed.success
     ? { ...parsed.data, tokenBudget: parsed.data.tokenBudget ?? tokenBudget }
-    : { version: 1, phase: "SOURCE", turn: 0, phaseStarted: false, tokenBudget };
+    : { version: 2, iteration: 0, tokenBudget };
 }
 
-export function beginTurn(state: AgentRuntimeState, maxTurns: number, deadlineAt: Date, now = new Date()) {
+export function assertWithinDeadline(deadlineAt: Date, now = new Date()): void {
   if (now >= deadlineAt) throw new AppError(408, "Agent run execution deadline exceeded", "RUN_DEADLINE_EXCEEDED");
-  if (state.phaseStarted) return state;
-  if (state.turn >= maxTurns) throw new AppError(422, "Agent run turn limit exceeded", "RUN_TURN_LIMIT_EXCEEDED");
-  return { ...state, turn: state.turn + 1, phaseStarted: true };
-}
-
-export function nextPhase(state: AgentRuntimeState): AgentRuntimeState {
-  const phase = state.phase === "SOURCE" ? "ANALYZE" : state.phase === "ANALYZE" ? "ACTION" : "FINALIZE";
-  return { ...state, phase, phaseStarted: false };
 }
 
 export function progressEvent(state: AgentRuntimeState, summary: string) {
-  return { event: "RUN_PROGRESS", phase: state.phase, turn: state.turn, summary };
+  return { event: "RUN_PROGRESS", iteration: state.iteration, summary };
 }

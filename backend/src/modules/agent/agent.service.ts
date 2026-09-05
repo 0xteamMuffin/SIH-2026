@@ -7,26 +7,21 @@ import { AppError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { mostRestrictiveClassification } from "../../lib/data-classification.js";
 import { invokeModelWithFallbacks } from "../../infrastructure/models/model-orchestrator.js";
-import type { ModelImageInput, VisionImageMimeType } from "../../infrastructure/models/model-provider.js";
+import type { ChatMessage, ModelImageInput, VisionImageMimeType } from "../../infrastructure/models/model-provider.js";
 import { renderPdfPages } from "../../infrastructure/pdf-renderer/pdf-renderer-client.js";
-import { eligibleRoutingDecision, routingDecisionForPersistedRun, selectModel, type RoutingDecision } from "../../infrastructure/models/model-router.js";
-import { runCode } from "../../infrastructure/sandbox/sandbox-client.js";
+import { eligibleRoutingDecision, requiredCapability, routeForTurn, selectModel, visionRequiredForSource, type ModelRequirements, type RoutingDecision } from "../../infrastructure/models/model-router.js";
 import { AGENT_RUN_CANCELLED_TOPIC, AGENT_RUN_REQUESTED_TOPIC } from "../../infrastructure/queue/agent-run-message.js";
-import { createArtifact, findArtifact, getArtifactBounded } from "../artifacts/artifacts.service.js";
+import { findArtifact, getArtifactBounded } from "../artifacts/artifacts.service.js";
 import { extractArtifact } from "../artifacts/artifact-extraction.service.js";
-import { approvalNoteDocx } from "./approval-note.js";
-import { codeRepairMessages, modelMessages } from "./agent-prompts.js";
 import { loadConversationHistory } from "./conversation-history.js";
-import { parseGeneratedCode, sandboxToolResult, type EvidenceItem, type GeneratedCode, type ToolResult } from "./agent.types.js";
-import { deliverableCitations, fallbackDocx, fallbackPptx, fallbackXlsx, selectDeliverableFormat, type DeliverableCitation, type DeliverableFormat } from "./agent-deliverables.js";
-import { authoringMessages, authoringRepairMessages, mergeDocx, mergePptx, mergeXlsx, parseAuthored } from "./deliverable-authoring.js";
-import { generatePptx, PPTX_MIME_TYPE } from "../deliverables/pptx-generator.js";
-import { generateXlsx, XLSX_MIME_TYPE } from "../deliverables/xlsx-generator.js";
+import type { EvidenceItem, ToolResult } from "./agent.types.js";
 import type { AuthUser } from "../../middleware/auth.js";
 import { isAgentToolName, registeredTool, toolRequiresApproval, validateToolInput, validateToolOutput, type AgentToolName } from "./agent-tool-registry.js";
-import { beginTurn, nextPhase, progressEvent, runtimeState, type AgentRuntimeState, type ModelTokenBudget } from "./agent-runtime.js";
+import { assertWithinDeadline, progressEvent, runtimeState, type ModelTokenBudget } from "./agent-runtime.js";
 import { pauseForToolApproval, RunWaitingForApproval } from "./agent-approval.service.js";
-import { searchAgentKnowledge, type KnowledgeSearchCitation } from "./agent-knowledge-search.js";
+import { runAgentLoop } from "./agent-loop.js";
+import { loopOpeningMessage, loopSystemPrompt, priorTurnMessages } from "./agent-loop-prompt.js";
+import { createToolDispatcher } from "./agent-tool-handlers.js";
 
 const MAX_SOURCE_CHARS = 12_000;
 const EXTRACTION_VERSION = "canonical-v1";
@@ -145,72 +140,6 @@ async function saveEvidence(runId: string, kind: EvidenceKind, artifactId: strin
   const item = existing ?? await prisma.evidence.create({ data: { runId, kind, artifactId, sourceRef, title, summary, facts: toJson(facts) } });
   return { id: item.id, sourceRef, title, summary, facts };
 }
-/**
- * Has the model write a deliverable body, with one repair attempt.
- *
- * A malformed body is a routine model failure rather than a run failure, so
- * two misses fall back to a minimal document that states plainly that it is
- * degraded. Failing the whole run here would discard analysis that is already
- * correct and already paid for.
- */
-async function authorDeliverableContent(input: {
-  format: DeliverableFormat;
-  task: string;
-  analysis: string;
-  sourceText: string | undefined;
-  citations: DeliverableCitation[];
-  runId: string;
-  decision: RoutingDecision;
-  classification: DataClassification;
-  tokenBudget: AgentRuntimeState["tokenBudget"];
-  signal: AbortSignal;
-}): Promise<{ content: unknown; authored: boolean }> {
-  const { format, task, analysis, sourceText, citations } = input;
-  const invoke = (messages: { system: string; prompt: string }) => invokeModelWithFallbacks({
-    runId: input.runId,
-    decision: input.decision,
-    classification: input.classification,
-    ...messages,
-    signal: input.signal,
-    tokenBudget: input.tokenBudget,
-  });
-
-  let lastOutput = "";
-  let lastReason = "";
-  // A response stopped by the output cap is truncated rather than malformed,
-  // and needs to be told to produce less — not to fix its syntax.
-  let truncated = false;
-  try {
-    const first = await invoke(authoringMessages(format, task, analysis, sourceText, citations));
-    lastOutput = first.response.text;
-    truncated = first.response.finishReason === "length";
-    return { content: parseAuthored(format, lastOutput), authored: true };
-  } catch (error) {
-    if (input.signal.aborted || isTerminalModelError(error)) throw error;
-    lastReason = error instanceof Error ? error.message : "Unknown validation failure";
-  }
-
-  try {
-    const repaired = await invoke(
-      authoringRepairMessages(format, task, analysis, sourceText, citations, lastOutput, lastReason, truncated),
-    );
-    return { content: parseAuthored(format, repaired.response.text), authored: true };
-  } catch (error) {
-    if (input.signal.aborted || isTerminalModelError(error)) throw error;
-    logger.warn({ runId: input.runId, format, reason: lastReason, truncated }, "deliverable authoring fell back to the minimal template");
-  }
-
-  const content = format === "pptx"
-    ? fallbackPptx(analysis, citations)
-    : format === "xlsx"
-      ? fallbackXlsx(analysis, citations)
-      : fallbackDocx(analysis, citations);
-  return { content, authored: false };
-}
-
-function knowledgePrompt(citations: KnowledgeSearchCitation[]) {
-  return citations.map((citation, index) => `[K${index + 1}] ${citation.title}\nSource: ${citation.sourceRef}\n${citation.text}`).join("\n\n");
-}
 function accessibleRunWhere(runId: string, actor: Pick<AuthUser, "id" | "role">): Prisma.AgentRunWhereInput {
   return actor.role === "ADMIN"
     ? { id: runId }
@@ -223,12 +152,21 @@ function mutableRunWhere(runId: string, actor: Pick<AuthUser, "id" | "role">): P
 }
 export async function createRun(input: { workspaceId: string; userId: string; task: string; dataClassification: DataClassification; artifactId?: string; conversationId?: string }) {
   let classification = input.dataClassification;
+  let sourceMimeType: string | undefined;
   if (input.artifactId) {
     const source = await findArtifact(input.artifactId);
     if (!source || source.workspaceId !== input.workspaceId || source.lifecycleStatus !== ArtifactLifecycleStatus.ACTIVE) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
     classification = mostRestrictiveClassification(classification, source.classification);
+    sourceMimeType = source.detectedMimeType ?? undefined;
   }
-  const configuredDecision = selectModel(input.task, Boolean(input.artifactId));
+  // What the work needs is read off the input, not off the request text. Only
+  // an attachment's media type is knowable this early; extraction can reveal a
+  // scan later, and the run re-routes when it does.
+  const requirements: ModelRequirements = {
+    vision: sourceMimeType !== undefined && visionRequiredForSource({ mimeType: sourceMimeType }),
+    tools: true,
+  };
+  const configuredDecision = selectModel(requirements);
   let decision;
   try {
     decision = eligibleRoutingDecision(configuredDecision, classification);
@@ -251,7 +189,7 @@ export async function createRun(input: { workspaceId: string; userId: string; ta
     if (workspaceActiveRuns >= 1) throw new AppError(409, "Workspace already has an active agent run", "WORKSPACE_RUN_CONCURRENCY_LIMIT_EXCEEDED");
     const userActiveRuns = await transaction.agentRun.count({ where: { requestedBy: input.userId, activeWorkspaceId: { not: null } } });
     if (userActiveRuns >= env.AGENT_MAX_CONCURRENT_RUNS_PER_USER) throw new AppError(429, "User concurrent agent-run limit exceeded", "USER_RUN_CONCURRENCY_LIMIT_EXCEEDED");
-    const created = await transaction.agentRun.create({ data: { id: runId, workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, sourceArtifactId: input.artifactId, conversationId: input.conversationId ?? null, activeWorkspaceId: input.workspaceId, maxTurns: env.AGENT_MAX_TURNS, maxToolCalls: env.AGENT_MAX_TOOL_CALLS, deadlineAt: new Date(Date.now() + env.AGENT_RUN_DEADLINE_MS), state: { version: 1, phase: "SOURCE", turn: 0, phaseStarted: false, tokenBudget } } });
+    const created = await transaction.agentRun.create({ data: { id: runId, workspaceId: input.workspaceId, requestedBy: input.userId, task: input.task, dataClassification: classification, taskCapability: decision.capability, modelProfile: decision.profile.id, modelReason: decision.reason, sourceArtifactId: input.artifactId, conversationId: input.conversationId ?? null, activeWorkspaceId: input.workspaceId, maxTurns: env.AGENT_MAX_TURNS, maxToolCalls: env.AGENT_MAX_TOOL_CALLS, deadlineAt: new Date(Date.now() + env.AGENT_RUN_DEADLINE_MS), state: { version: 2, iteration: 0, tokenBudget } } });
     await transaction.outboxEvent.create({ data: { topic: AGENT_RUN_REQUESTED_TOPIC, aggregateId: runId, payload: toJson({ runId }) } });
     return created;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
@@ -270,7 +208,15 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
     return;
   }
   cancellationSignal?.throwIfAborted();
-  const decision = routingDecisionForPersistedRun(persistedRun);
+  // Requirements start from what admission knew and are refined once the run
+  // can see its own input. Routing is then redone per turn, so a need
+  // discovered mid-run takes effect on the next call.
+  let requirements: ModelRequirements = { vision: persistedRun.taskCapability === "vision", tools: true };
+  let decision = routeForTurn({
+    requirements,
+    classification: persistedRun.dataClassification,
+    preferredProfileId: persistedRun.modelProfile,
+  });
   const leaseId = crypto.randomUUID();
   const startedAt = new Date();
   const claimed = await prisma.$transaction(async (transaction) => {
@@ -300,39 +246,37 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
   const maxToolCalls = run.maxToolCalls ?? env.AGENT_MAX_TOOL_CALLS;
   const toolOptions = { workspaceId: run.workspaceId, leaseId, maxToolCalls };
   let state = runtimeState(run.state, configuredTokenBudget());
-  const startPhase = async (phase: AgentRuntimeState["phase"], summary: string) => {
-    if (state.phase !== phase) return false;
-    const wasStarted = state.phaseStarted;
-    state = beginTurn(state, maxTurns, deadlineAt);
-    const saved = await prisma.agentRun.updateMany({ where: { id: run.id, status: RunStatus.RUNNING, leaseId }, data: { state: toJson(state) } });
-    if (saved.count === 0) throw new Error("Agent run lease was lost");
-    if (!wasStarted) await appendMessage(run.id, state.turn, "system", progressEvent(state, summary));
-    return true;
-  };
-  const finishPhase = async () => {
-    state = nextPhase(state);
-    const saved = await prisma.agentRun.updateMany({ where: { id: run.id, status: RunStatus.RUNNING, leaseId }, data: { state: toJson(state) } });
-    if (saved.count === 0) throw new Error("Agent run lease was lost");
-  };
   try {
     signal.throwIfAborted();
-    if (state.turn === 0) {
+    if (state.iteration === 0) {
       await appendMessage(run.id, 0, "system", { event: "RUN_STARTED", model: decision.profile.id, capability: decision.capability, maxTurns, maxToolCalls, tokenBudget: state.tokenBudget, deadlineAt: deadlineAt.toISOString() });
       await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId: run.id, eventType: "MODEL_ROUTED", metadata: { profile: decision.profile.id, capability: decision.capability, sovereign: decision.profile.sovereign } });
     }
+
     const evidence: EvidenceItem[] = [];
-    let sourceText: string | undefined;
     let modelImages: ModelImageInput[] = [];
     let visionInput: Record<string, unknown> | undefined;
     let sourceLimitation: string | undefined;
-    const searchesKnowledge = decision.capability === "document" || decision.capability === "general";
-    const sourcePhase = await startPhase("SOURCE", sourceArtifactId ? "Reading source artifact and searching knowledge" : searchesKnowledge ? "Searching workspace knowledge" : "No source artifact to read");
+    let sourceFilename: string | undefined;
+
+    let source: Awaited<ReturnType<typeof findArtifact>> | undefined;
     if (sourceArtifactId) {
-      const source = await findArtifact(sourceArtifactId);
+      source = await findArtifact(sourceArtifactId);
       if (!source || source.workspaceId !== run.workspaceId) throw new AppError(400, "Source artifact is unavailable in this workspace", "INVALID_ARTIFACT");
+      if (!source.detectedMimeType) throw new AppError(422, "Source artifact has no validated MIME type", "SOURCE_MIME_UNVALIDATED");
+      sourceFilename = source.filename;
+    }
+
+    // Rendering visual input is deterministic policy: which pages, at what
+    // size, under what limits. *Whether* it is needed is discovered rather
+    // than guessed — an image has no text to read, a document that extracts
+    // to nothing is a scan, and the agent can ask to look at a document whose
+    // text turned out to be useless. This runs at most once per run.
+    const prepareVisualInput = async (): Promise<number> => {
+      if (modelImages.length > 0) return modelImages.length;
+      if (!source?.detectedMimeType) throw new AppError(422, "This run has no source document to look at", "NO_SOURCE_ARTIFACT");
       const sourceMimeType = source.detectedMimeType;
-      if (!sourceMimeType) throw new AppError(422, "Source artifact has no validated MIME type", "SOURCE_MIME_UNVALIDATED");
-      if (decision.capability === "vision") {
+      {
         const limitations: string[] = [];
         let evidenceSummary: string;
         if (DIRECT_VISION_IMAGE_MIME_TYPES.includes(sourceMimeType as typeof DIRECT_VISION_IMAGE_MIME_TYPES[number])) {
@@ -372,206 +316,199 @@ export async function processRun(runId: string, cancellationSignal?: AbortSignal
           throw new AppError(415, `Validated source MIME type '${sourceMimeType}' is not supported for vision inference`, "VISION_SOURCE_MIME_UNSUPPORTED");
         }
 
-        let extractionStatus = "unavailable";
-        if (source.extractionStatus === ArtifactExtractionStatus.COMPLETED) {
-          const read = await executeRunTool(run.id, "artifact.read", { artifactId: source.id, extractionVersion: EXTRACTION_VERSION }, async () => {
-            const extraction = await extractArtifact(source.id, signal);
-            sourceText = extraction.text.slice(0, MAX_SOURCE_CHARS);
-            return { ok: true, summary: `Read completed extraction for ${source.filename}`, data: { characters: sourceText.length, text: sourceText } };
-          }, signal, toolOptions);
-          if (read.ok && typeof read.data?.text === "string") {
-            sourceText = read.data.text;
-            extractionStatus = "completed";
-          } else {
-            limitations.push(`Completed deterministic text extraction could not be read${read.errorCode ? ` (${read.errorCode})` : ""}.`);
-          }
-          if (sourcePhase) await appendMessage(run.id, state.turn, "tool", { tool: "artifact.read", status: read.ok ? "completed" : "failed", summary: read.summary });
-        } else {
-          limitations.push("No completed deterministic text extraction was available; visual findings are not OCR-grounded.");
-        }
-        sourceLimitation = limitations.join(" ");
-        visionInput = { ...visionInput, textExtraction: { status: extractionStatus, artifactStatus: source.extractionStatus }, limitations };
+        // This records only what the *visual* input was and how it was
+        // bounded; the document's words come from extraction.
+        sourceLimitation = limitations.length > 0 ? limitations.join(" ") : undefined;
+        visionInput = { ...visionInput, limitations };
+
+        // The rendered pages are evidence in their own right, so a deliverable
+        // can cite the visual source even when no text was extracted.
         evidence.push(await saveEvidence(
           run.id,
           EvidenceKind.SOURCE,
           source.id,
           `artifact:${source.id}`,
           source.filename,
-          sourceText?.slice(0, 800) ?? `${evidenceSummary} ${sourceLimitation}`.trim(),
-          sourceText?.split(/(?<=[.!?])\s+/).filter(Boolean).slice(0, 8) ?? [],
+          `${evidenceSummary} ${sourceLimitation ?? ""}`.trim(),
+          [evidenceSummary],
         ));
-      } else {
-        const read = await executeRunTool(run.id, "artifact.read", { artifactId: source.id, extractionVersion: EXTRACTION_VERSION }, async () => {
-          const extraction = await extractArtifact(source.id, signal);
-          sourceText = extraction.text.slice(0, MAX_SOURCE_CHARS);
-          return { ok: true, summary: `Extracted ${source.filename}`, data: { characters: sourceText.length, text: sourceText } };
-        }, signal, toolOptions);
-        if (!read.ok) throw new AppError(502, read.summary, read.errorCode ?? "ARTIFACT_READ_FAILED");
-        if (typeof read.data?.text === "string") sourceText = read.data.text;
-        if (sourceText === undefined) throw new Error("Artifact read completed without source text");
-        evidence.push(await saveEvidence(run.id, EvidenceKind.SOURCE, source.id, `artifact:${source.id}`, source.filename, sourceText.slice(0, 800), sourceText.split(/(?<=[.!?])\s+/).filter(Boolean).slice(0, 8)));
-        if (sourcePhase) await appendMessage(run.id, state.turn, "tool", { tool: "artifact.read", status: "completed", summary: read.summary });
+      }
+      return modelImages.length;
+    };
+
+    // Extraction runs before the loop for anything with a text layer.
+    // It is cached and idempotent, so `artifact.read` still returns the same
+    // text and still records the evidence — warming it here removes the case
+    // where a run never touches its own attachment because inference failed
+    // before the model could ask for it, and it is what reveals a scan.
+    //
+    // A failure is deliberately not fatal: `artifact.read` will surface it as
+    // a tool error the agent can react to, and the agent can still ask to
+    // look at the document instead.
+    let extractedCharacters: number | undefined;
+    if (sourceArtifactId && source?.detectedMimeType && !source.detectedMimeType.startsWith("image/")) {
+      try {
+        const extraction = await extractArtifact(sourceArtifactId, signal);
+        extractedCharacters = extraction.text.length;
+      } catch (error) {
+        if (signal.aborted) throw error;
+        logger.warn({ error, runId: run.id, artifactId: sourceArtifactId }, "Source extraction failed before the loop");
       }
     }
-    if (searchesKnowledge) {
-      const searched = await executeRunTool(run.id, "knowledge.search", { query: run.task }, async (persistedToolInput) => {
-        const searchInput = validateToolInput("knowledge.search", persistedToolInput);
-        const citations = await searchAgentKnowledge({ workspaceId: run.workspaceId, classification: run.dataClassification, query: searchInput.query, signal });
-        return { ok: true, summary: citations.length > 0 ? `Retrieved ${citations.length} knowledge citation(s)` : "No relevant knowledge citations found", data: { citations } };
-      }, signal, toolOptions);
-      // Knowledge search enriches a run; it does not define it. A provider
-      // rate limit or outage here used to fail the whole task even when the
-      // user's own attached document was already read and sufficient, so the
-      // failure is recorded as a tool step and the run continues without
-      // citations.
-      if (!searched.ok) {
-        logger.warn({ runId: run.id, reason: searched.summary }, "knowledge search failed; continuing without citations");
-      }
-      const citations = (searched.ok ? searched.data?.citations ?? [] : []) as KnowledgeSearchCitation[];
-      for (const citation of citations) {
-        evidence.push(await saveEvidence(run.id, EvidenceKind.SOURCE, citation.artifactId, citation.sourceRef, citation.title, citation.text.slice(0, 800), [citation.text]));
-      }
-      if (citations.length > 0) sourceText = [sourceText, knowledgePrompt(citations)].filter(Boolean).join("\n\nRetrieved knowledge citations:\n");
-      if (sourcePhase) await appendMessage(run.id, state.turn, "tool", { tool: "knowledge.search", status: searched.ok ? "completed" : "failed", summary: searched.summary });
+
+    if (source?.detectedMimeType && visionRequiredForSource({
+      mimeType: source.detectedMimeType,
+      ...(extractedCharacters !== undefined ? { extractedCharacters } : {}),
+    })) {
+      requirements = { ...requirements, vision: true };
     }
-    if (sourcePhase) await finishPhase();
-    let analysis = "No model analysis was required.";
-    let generatedCode: GeneratedCode | undefined;
-    let selectedProfile = decision.profile;
-    // Earlier turns of this chat, so a follow-up can build on what was already
-    // asked and answered instead of starting cold.
+
+    // Images known to be needed from the start ride on the opening turn.
+    // A need discovered later arrives as its own message instead.
+    const visualInputFromStart = requirements.vision;
+    if (visualInputFromStart) await prepareVisualInput();
+
     const history = await loadConversationHistory({
       workspaceId: run.workspaceId,
       conversationId: run.conversationId,
       excludeRunId: run.id,
     });
-    const messages = modelMessages(run.task, decision.capability, sourceText, sourceLimitation, history);
-    const analyzePhase = await startPhase("ANALYZE", "Producing bounded model output");
-    const analyzed = await executeRunTool(run.id, "model.analyze", { model: decision.profile.id, capability: decision.capability }, async () => {
-      const selected = await invokeModelWithFallbacks({ runId: run.id, decision, classification: run.dataClassification, ...messages, images: modelImages, signal, tokenBudget: state.tokenBudget });
-      selectedProfile = selected.profile;
-      if (decision.capability === "code") {
-        try {
-          generatedCode = parseGeneratedCode(selected.response.text);
-        } catch {
-          const repaired = await invokeModelWithFallbacks({
-            runId: run.id,
-            decision: { ...decision, profile: selectedProfile },
-            classification: run.dataClassification,
-            ...codeRepairMessages(run.task, selected.response.text, sourceText, sourceLimitation, history),
-            signal,
-            tokenBudget: state.tokenBudget,
-          });
-          selectedProfile = repaired.profile;
-          generatedCode = parseGeneratedCode(repaired.response.text);
-        }
-        analysis = generatedCode.explanation;
-        return { ok: true, summary: "Generated code validated", data: { characters: generatedCode.code.length, analysis, generatedCode, modelProfile: selectedProfile.id } };
-      }
-      analysis = selected.response.text.trim() || "The model returned no analysis.";
-      return { ok: true, summary: "Model analysis completed", data: { characters: analysis.length, analysis, modelProfile: selectedProfile.id } };
-    }, signal, toolOptions);
-    if (!analyzed.ok) throw new Error(analyzed.summary);
-    if (typeof analyzed.data?.analysis === "string") analysis = analyzed.data.analysis;
-    if (decision.capability === "code") generatedCode = parseGeneratedCode(JSON.stringify(analyzed.data?.generatedCode));
-    if (typeof analyzed.data?.modelProfile === "string") {
-      selectedProfile = [decision.profile, ...decision.fallbacks].find((profile) => profile.id === analyzed.data?.modelProfile) ?? selectedProfile;
-    }
+
+    let produced: { id: string; filename: string } | undefined;
+    const dispatcher = createToolDispatcher({
+      run: { id: run.id, workspaceId: run.workspaceId, requestedBy: run.requestedBy, dataClassification: run.dataClassification },
+      task: run.task,
+      ...(sourceFilename ? { sourceFilename } : {}),
+      extractionVersion: EXTRACTION_VERSION,
+      signal,
+      evidence,
+      execute: (name, input, work) => executeRunTool(run.id, name, input, work, signal, toolOptions),
+      saveEvidence: async (kind, artifactId, sourceRef, title, summary, facts) => {
+        const item = await saveEvidence(run.id, kind, artifactId, sourceRef, title, summary, facts);
+        evidence.push(item);
+        return item;
+      },
+      onArtifact: (artifact) => { produced = artifact; },
+      // The agent states a need; code decides what that need is allowed to
+      // route to. It never names a profile.
+      requestVisualInspection: async () => {
+        const pages = await prepareVisualInput();
+        requirements = { ...requirements, vision: true };
+        return { pages };
+      },
+    });
+
+    // A run that needed visual input from the start attaches the rendered
+    // pages to its opening message; everything else opens with the task alone.
+    const opening = loopOpeningMessage({ task: run.task, ...(sourceFilename ? { sourceFilename } : {}), ...(sourceLimitation ? { limitation: sourceLimitation } : {}) });
+    const openingContent = visualInputFromStart && modelImages.length > 0
+      ? [{ type: "text" as const, text: opening }, ...modelImages.map((image) => ({ type: "image" as const, mimeType: image.mimeType, bytes: image.bytes }))]
+      : opening;
+
+    /**
+     * Attaches pages the agent asked to see.
+     *
+     * They arrive as their own turn rather than being spliced into the opening
+     * message, so the request and the images stay adjacent in the
+     * conversation. Derived on every call and never persisted, because image
+     * bytes must not reach durable run messages.
+     */
+    const withVisualInput = (messages: ChatMessage[]): ChatMessage[] => {
+      if (visualInputFromStart || modelImages.length === 0) return messages;
+      return [...messages, {
+        role: "user",
+        content: [
+          { type: "text" as const, text: `The pages of ${sourceFilename ?? "the source document"} you asked to see are attached.${sourceLimitation ? ` ${sourceLimitation}` : ""}` },
+          ...modelImages.map((image) => ({ type: "image" as const, mimeType: image.mimeType, bytes: image.bytes })),
+        ],
+      }];
+    };
+
+    let selectedProfile = decision.profile;
+    const outcome = await runAgentLoop({
+      runId: run.id,
+      classification: run.dataClassification,
+      openingMessage: openingContent,
+      priorTurns: priorTurnMessages(history),
+      budget: { maxTurns, maxToolCalls },
+      dispatch: dispatcher,
+      signal,
+      systemPrompt: ({ turnsRemaining, toolCallsRemaining, mustFinish }) => loopSystemPrompt({
+        task: run.task,
+        classification: run.dataClassification,
+        ...(sourceArtifactId && sourceFilename
+          ? { sourceArtifact: { id: sourceArtifactId, filename: sourceFilename, extractionVersion: EXTRACTION_VERSION } }
+          : {}),
+        evidence,
+        turnsRemaining,
+        toolCallsRemaining,
+        mustFinish,
+        ...(sourceLimitation ? { sourceLimitation } : {}),
+      }),
+      invoke: async ({ system, messages, tools, toolChoice }) => {
+        // Routed per turn, not once per run: the requirements may have changed
+        // since the last call. The profile in hand is kept while it still
+        // meets them, so an ordinary turn does not move between providers.
+        decision = routeForTurn({
+          requirements,
+          classification: run.dataClassification,
+          preferredProfileId: selectedProfile.id,
+        });
+        const selected = await invokeModelWithFallbacks({
+          runId: run.id,
+          decision,
+          classification: run.dataClassification,
+          system,
+          messages: withVisualInput(messages),
+          tools,
+          toolChoice,
+          signal,
+          tokenBudget: state.tokenBudget,
+        });
+        selectedProfile = selected.profile;
+        return { text: selected.response.text, toolCalls: selected.response.toolCalls, profileId: selected.profile.id };
+      },
+      onIteration: async (iteration) => {
+        state = { ...state, iteration };
+        const saved = await prisma.agentRun.updateMany({
+          where: { id: run.id, status: RunStatus.RUNNING, leaseId },
+          data: { state: toJson(state) },
+        });
+        if (saved.count === 0) throw new Error("Agent run lease was lost");
+        await appendMessage(run.id, iteration, "system", progressEvent(state, `Iteration ${iteration}`));
+      },
+    });
+
     if (selectedProfile.id !== run.modelProfile) {
       await prisma.agentRun.updateMany({
         where: { id: run.id, status: RunStatus.RUNNING, leaseId },
-        data: { modelProfile: selectedProfile.id, modelReason: `${decision.reason} Profile '${selectedProfile.id}' completed the model invocation.` },
+        data: { modelProfile: selectedProfile.id, modelReason: `${decision.reason} Profile '${selectedProfile.id}' completed the run.` },
       });
     }
-    if (analyzePhase) await appendMessage(run.id, state.turn, "tool", { tool: "model.analyze", status: "completed", summary: analyzed.summary });
-    evidence.push(await saveEvidence(run.id, EvidenceKind.MODEL_OUTPUT, undefined, "model-analysis", "Model output", analysis, [analysis]));
-    if (analyzePhase) await finishPhase();
+
+    evidence.push(await saveEvidence(run.id, EvidenceKind.MODEL_OUTPUT, undefined, "model-analysis", "Model output", outcome.answer.answer, [outcome.answer.answer]));
     const sourceEvidence = evidence.filter((item) => item.sourceRef.startsWith("artifact:"));
     const result: Record<string, unknown> = {
-      analysis,
+      analysis: outcome.answer.answer,
+      confidence: outcome.answer.confidence,
+      iterations: outcome.iterations,
+      budgetExhausted: outcome.exhausted,
       sourceEvidenceIds: sourceEvidence.map((item) => item.id),
       modelOutputEvidenceIds: evidence.filter((item) => item.sourceRef === "model-analysis").map((item) => item.id),
       model: selectedProfile.id,
-      capability: decision.capability,
+      capability: requiredCapability(requirements),
     };
+    if (outcome.answer.unresolved && outcome.answer.unresolved.length > 0) result.unresolved = outcome.answer.unresolved;
     if (visionInput) result.visionInput = visionInput;
-    const actionPhase = await startPhase("ACTION", decision.capability === "code" ? "Requesting or executing sandbox action" : "Creating requested deliverable");
-    if (decision.capability === "code") {
-      if (!generatedCode) throw new Error("Validated generated code is unavailable");
-      const persisted = await executeRunTool(run.id, "code.persistOutput", generatedCode, async (persistedToolInput) => {
-        const output = parseGeneratedCode(JSON.stringify(persistedToolInput));
-        signal.throwIfAborted();
-        const extension = output.language === "python" ? "py" : "js";
-        const mimeType = output.language === "python" ? "text/x-python" : "text/javascript";
-        const artifact = await createArtifact({
-          workspaceId: run.workspaceId,
-          userId: run.requestedBy,
-          filename: `generated-code-${run.id}.${extension}`,
-          mimeType,
-          kind: "CODE_OUTPUT",
-          classification: run.dataClassification,
-          bytes: Buffer.from(output.code, "utf8"),
-          idempotencyKey: `run-${run.id}-code-output`,
-        });
-        return { ok: true, summary: "Persisted generated code", data: { artifactId: artifact.id } };
-      }, signal, toolOptions);
-      if (!persisted.ok || typeof persisted.data?.artifactId !== "string") throw new Error(persisted.summary);
-      result.codeArtifactId = persisted.data.artifactId;
-      result.generatedCode = { language: generatedCode.language, explanation: generatedCode.explanation };
-      const sandbox = await executeRunTool(run.id, "sandbox.execute", { language: generatedCode.language, code: generatedCode.code }, async (approvedInput) => {
-        const approved = validateToolInput("sandbox.execute", approvedInput);
-        const execution = await runCode(approved.code, approved.language, signal);
-        return sandboxToolResult(execution);
-      }, signal, toolOptions);
-      result.sandbox = sandbox;
-      if (sandbox.errorCode === "SANDBOX_NON_ZERO_EXIT") throw new AppError(422, sandbox.summary, sandbox.errorCode);
-    } else if (sourceEvidence.length > 0 && (sourceArtifactId || decision.capability === "document")) {
-      const evidenceIds = sourceEvidence.map((item) => item.id);
-      const format = selectDeliverableFormat(run.task);
-      const citations = deliverableCitations(sourceEvidence);
-      // The model writes the document body before the tool runs, so the
-      // authored content is what gets recorded as the tool's input and is
-      // auditable alongside every other call in the run.
-      const authored = await authorDeliverableContent({
-        format,
-        task: run.task,
-        analysis,
-        sourceText,
-        citations,
-        runId: run.id,
-        decision: { ...decision, profile: selectedProfile },
-        classification: run.dataClassification,
-        tokenBudget: state.tokenBudget,
-        signal,
-      });
-      const toolName = format === "pptx" ? "deliverable.createPresentation" : format === "xlsx" ? "deliverable.createSpreadsheet" : "deliverable.createApprovalNote";
-      const toolInput = { format, evidenceIds, content: authored.content };
-      const delivered = await executeRunTool(run.id, toolName, toolInput, async () => {
-        signal.throwIfAborted();
-        const output = format === "pptx"
-          ? { bytes: await generatePptx(mergePptx(run.task, authored.content as never, citations)), filename: `presentation-${run.id}.pptx`, mimeType: PPTX_MIME_TYPE, summary: "Generated cited PPTX" }
-          : format === "xlsx"
-            ? { bytes: await generateXlsx(mergeXlsx(run.task, authored.content as never, citations)), filename: `workbook-${run.id}.xlsx`, mimeType: XLSX_MIME_TYPE, summary: "Generated cited XLSX" }
-            : { bytes: Buffer.from(await approvalNoteDocx(mergeDocx(run.task, authored.content as never, citations))), filename: `approval-note-${run.id}.docx`, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", summary: "Generated approval-note DOCX" };
-        signal.throwIfAborted();
-        const kind = format === "pptx" ? ArtifactKind.GENERATED_PPTX : format === "xlsx" ? ArtifactKind.GENERATED_XLSX : ArtifactKind.GENERATED_DOCX;
-        const artifact = await createArtifact({ workspaceId: run.workspaceId, userId: run.requestedBy, filename: output.filename, mimeType: output.mimeType, kind, classification: run.dataClassification, bytes: output.bytes, idempotencyKey: `run-${run.id}-${format}` });
-        result.artifact = artifact;
-        return { ok: true, summary: output.summary, data: { artifactId: artifact.id } };
-      }, signal, toolOptions);
-      result.deliverableAuthoring = authored.authored ? "model" : "fallback";
-      const artifactId = delivered.data?.artifactId;
-      if (typeof artifactId === "string" && !result.artifact) {
-        const artifact = await findArtifact(artifactId);
-        if (artifact) result.artifact = { ...artifact, sizeBytes: Number(artifact.sizeBytes) };
-      }
+    if (produced) {
+      const artifact = await findArtifact(produced.id);
+      if (artifact) result.artifact = { ...artifact, sizeBytes: Number(artifact.sizeBytes) };
     }
-    if (actionPhase) await finishPhase();
-    await startPhase("FINALIZE", "Finalizing run result");
+
     signal.throwIfAborted();
-    await appendMessage(run.id, state.turn, "assistant", result);
+    await appendMessage(run.id, state.iteration, "assistant", result);
     const completed = await prisma.agentRun.updateMany({ where: { id: run.id, status: RunStatus.RUNNING, leaseId }, data: { status: RunStatus.COMPLETED, result: toJson(result), activeWorkspaceId: null, leaseId: null, heartbeatAt: null, leaseExpiresAt: null, completedAt: new Date() } });
-    if (completed.count > 0) await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId: run.id, eventType: "AGENT_RUN_COMPLETED", metadata: { sovereign: selectedProfile.sovereign } });
+    if (completed.count > 0) await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId: run.id, eventType: "AGENT_RUN_COMPLETED", metadata: { sovereign: selectedProfile.sovereign, iterations: outcome.iterations } });
   } catch (error) {
     if (error instanceof RunWaitingForApproval) {
       await audit({ actorId: run.requestedBy, workspaceId: run.workspaceId, runId, eventType: "TOOL_APPROVAL_REQUESTED", metadata: { approvalId: error.approvalId } });

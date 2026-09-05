@@ -2,7 +2,7 @@ import { DataClassification, ModelInvocationStatus } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../lib/errors.js";
 import { allowsExternalInference } from "../../lib/data-classification.js";
-import { askModel, type ModelImageInput, type TextModelResponse } from "./model-provider.js";
+import { runInference, type ChatMessage, type ModelResponse, type ToolDefinition } from "./model-provider.js";
 import { estimateInvocationCost } from "./model-pricing.js";
 import type { ModelProfile } from "./model-registry.js";
 import type { RoutingDecision } from "./model-router.js";
@@ -16,6 +16,11 @@ const providerFailureCodes = new Set([
   "MODEL_PROVIDER_ERROR",
   "MODEL_RESPONSE_INVALID",
   "MODEL_RESPONSE_EMPTY",
+  // Routing filters these out, so reaching them means a registry flag is
+  // wrong. Falling through to the next candidate degrades to a working model
+  // instead of failing a run over a configuration mistake.
+  "MODEL_TOOLS_UNSUPPORTED",
+  "MODEL_VISION_UNSUPPORTED",
 ]);
 
 function isCancellation(error: unknown, signal?: AbortSignal) {
@@ -54,16 +59,25 @@ function ensureBudgetNotExceeded(budget: ModelTokenBudget, usage: TokenUsage) {
   if (usage.totalTokens > budget.maxTotalTokens) throw new RunTokenBudgetError("Agent run total-token budget exceeded", budget, usage);
 }
 
+/**
+ * Runs one inference turn with provider fallback, token accounting, and
+ * per-attempt telemetry.
+ *
+ * Takes a message list rather than a single prompt because the agent loop
+ * carries a growing conversation, and tools because the model chooses its own
+ * next action. Text-only callers pass a two-message list.
+ */
 export async function invokeModelWithFallbacks(input: {
   runId: string;
   decision: RoutingDecision;
   classification: DataClassification;
   system: string;
-  prompt: string;
-  images?: readonly ModelImageInput[];
+  messages: ChatMessage[];
+  tools?: ToolDefinition[];
+  toolChoice?: "auto" | "required";
   signal?: AbortSignal;
   tokenBudget: ModelTokenBudget;
-}): Promise<{ profile: ModelProfile; response: TextModelResponse }> {
+}): Promise<{ profile: ModelProfile; response: ModelResponse }> {
   const candidates = [input.decision.profile, ...input.decision.fallbacks]
     .filter((profile, index, profiles) => profiles.findIndex((candidate) => candidate.id === profile.id) === index)
     .filter((profile) => profile.enabled && profile.capabilities.includes(input.decision.capability))
@@ -114,9 +128,19 @@ export async function invokeModelWithFallbacks(input: {
       },
     });
     const startedAt = performance.now();
-    let response: TextModelResponse;
+    let response: ModelResponse;
     try {
-      response = await askModel(boundedProfile, input.classification, input.system, input.prompt, input.signal, input.images);
+      response = await runInference(
+        boundedProfile,
+        input.classification,
+        {
+          messages: [{ role: "system", content: input.system }, ...input.messages],
+          ...(input.tools && input.tools.length > 0
+            ? { tools: input.tools, toolChoice: input.toolChoice ?? "auto" }
+            : {}),
+        },
+        input.signal,
+      );
     } catch (error) {
       const cancelled = isCancellation(error, input.signal);
       await prisma.modelInvocation.update({

@@ -72,7 +72,10 @@ const schema = z.object({
   RUN_LEASE_DURATION_MS: z.coerce.number().int().min(5_000).max(600_000).default(30_000),
   RUN_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).default(10_000),
   RUN_RECOVERY_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000).max(600_000).default(15_000),
-  AGENT_MAX_TURNS: z.coerce.number().int().min(1).max(32).default(4),
+  // One turn is one model call in the agentic loop, not one phase of a fixed
+  // pipeline. Reading a document, searching, producing a deliverable and
+  // answering is already four; four total left no room to think.
+  AGENT_MAX_TURNS: z.coerce.number().int().min(1).max(32).default(12),
   // A single coding turn already spends four calls (knowledge search, model
   // analysis, persisting the code, running the sandbox), and resuming after an
   // approval can re-route to a fallback profile and spend more. Five left no

@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { agentRunMock } = vi.hoisted(() => ({ agentRunMock: { findMany: vi.fn() } }));
+const { agentRunMock, loggerMock } = vi.hoisted(() => ({
+  agentRunMock: { findMany: vi.fn(), findFirst: vi.fn() },
+  loggerMock: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
 vi.mock("../src/lib/prisma.js", () => ({ prisma: { agentRun: agentRunMock } }));
+vi.mock("../src/lib/logger.js", () => ({ logger: loggerMock }));
 
 const { conversationPrompt, loadConversationHistory } = await import(
   "../src/modules/agent/conversation-history.js"
@@ -26,6 +30,7 @@ describe("loadConversationHistory", () => {
 
   it("asks only for completed turns of the same conversation, excluding itself", async () => {
     agentRunMock.findMany.mockResolvedValue([]);
+    agentRunMock.findFirst.mockResolvedValue(null);
 
     await loadConversationHistory({
       workspaceId: "workspace-1",
@@ -44,6 +49,35 @@ describe("loadConversationHistory", () => {
         orderBy: { createdAt: "desc" },
       }),
     );
+  });
+
+  it("reports a thread whose earlier turns sit in another workspace", async () => {
+    // This is a client bug — a chat must stay in one workspace — and scoping
+    // hides it as a plain empty history, so it has to be said out loud.
+    agentRunMock.findMany.mockResolvedValue([]);
+    agentRunMock.findFirst.mockResolvedValue({ workspaceId: "workspace-2" });
+
+    const history = await loadConversationHistory({
+      workspaceId: "workspace-1",
+      conversationId: "chat-1",
+      excludeRunId: "run-2",
+    });
+
+    expect(history).toEqual([]);
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedWorkspaceId: "workspace-1", foundInWorkspaceId: "workspace-2" }),
+      expect.stringContaining("different workspace"),
+    );
+  });
+
+  it("stays quiet when a thread simply has no earlier turns", async () => {
+    agentRunMock.findMany.mockResolvedValue([]);
+    agentRunMock.findFirst.mockResolvedValue(null);
+    loggerMock.warn.mockClear();
+
+    await loadConversationHistory({ workspaceId: "workspace-1", conversationId: "chat-1", excludeRunId: "run-2" });
+
+    expect(loggerMock.warn).not.toHaveBeenCalled();
   });
 
   it("returns turns oldest first, so the transcript reads forwards", async () => {

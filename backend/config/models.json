@@ -72,6 +72,7 @@
       "providerId": "development-remote",
       "modelId": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
       "capabilities": ["vision"],
+      "supportsTools": false,
       "priority": 10,
       "pricing": { "version": "openrouter-free-2026-08-30", "currency": "USD", "inputPerMillionTokens": 0, "outputPerMillionTokens": 0 }
     },
@@ -196,6 +197,7 @@
       "providerId": "local-runtime",
       "modelId": "qwen3.5:4b",
       "capabilities": ["vision"],
+      "supportsTools": true,
       "priority": 1000
     },
     {

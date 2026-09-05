@@ -8,7 +8,14 @@ function text(max: number) {
   return z.string().trim().min(1).max(max).refine((value) => !invalidXmlControl.test(value), "Text contains an unsupported control character");
 }
 
-const citationIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/);
+/**
+ * A citation handle.
+ *
+ * Wide enough to hold a UUID, because an agent naturally cites using the
+ * evidence ids it was shown; those are normalised to short handles before the
+ * document is rendered.
+ */
+const citationIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
 
 export const citationSchema = z.object({
   id: citationIdSchema,

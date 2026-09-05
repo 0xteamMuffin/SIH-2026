@@ -2,7 +2,7 @@ import { ApprovalStatus, DataClassification, RunStatus, RunToolCallStatus } from
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "../src/lib/errors.js";
 
-const { approvalNoteMock, artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock, generatePptxMock, generateXlsxMock, getArtifactBoundedMock, invokeModelMock, knowledgeSearchMock, outboxEventMock, queryRawMock, renderPdfPagesMock, runCodeMock, runMessageMock, runToolCallMock, toolApprovalMock, transactionMock } = vi.hoisted(() => ({
+const { approvalNoteMock, artifactMock, auditMock, agentRunMock, evidenceMock, extractArtifactMock, modelProfilesMock, generatePptxMock, generateXlsxMock, getArtifactBoundedMock, invokeModelMock, knowledgeSearchMock, outboxEventMock, queryRawMock, renderPdfPagesMock, runCodeMock, runMessageMock, runToolCallMock, toolApprovalMock, transactionMock } = vi.hoisted(() => ({
   approvalNoteMock: vi.fn(),
   artifactMock: { create: vi.fn(), find: vi.fn() },
   auditMock: vi.fn(),
@@ -17,6 +17,7 @@ const { approvalNoteMock, artifactMock, auditMock, agentRunMock, evidenceMock, e
   },
   evidenceMock: { create: vi.fn(), findFirst: vi.fn() },
   extractArtifactMock: vi.fn(),
+  modelProfilesMock: vi.fn(),
   generatePptxMock: vi.fn(),
   generateXlsxMock: vi.fn(),
   getArtifactBoundedMock: vi.fn(),
@@ -25,7 +26,7 @@ const { approvalNoteMock, artifactMock, auditMock, agentRunMock, evidenceMock, e
   outboxEventMock: { create: vi.fn() },
   renderPdfPagesMock: vi.fn(),
   runCodeMock: vi.fn(),
-  runMessageMock: { create: vi.fn() },
+  runMessageMock: { create: vi.fn(), findMany: vi.fn() },
   runToolCallMock: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), count: vi.fn() },
   toolApprovalMock: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
   transactionMock: vi.fn(),
@@ -39,12 +40,49 @@ vi.mock("../src/infrastructure/pdf-renderer/pdf-renderer-client.js", () => ({ re
 vi.mock("../src/infrastructure/sandbox/sandbox-client.js", () => ({ runCode: runCodeMock }));
 vi.mock("../src/modules/artifacts/artifacts.service.js", () => ({ createArtifact: artifactMock.create, findArtifact: artifactMock.find, getArtifactBounded: getArtifactBoundedMock }));
 vi.mock("../src/modules/artifacts/artifact-extraction.service.js", () => ({ extractArtifact: extractArtifactMock }));
+// Routing reads the profile registry, so the pool is stated here rather than
+// inherited from config/models.json and whichever API keys happen to be set.
+vi.mock("../src/infrastructure/models/model-registry.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/infrastructure/models/model-registry.js")>()),
+  modelProfiles: modelProfilesMock,
+}));
 vi.mock("../src/modules/agent/agent-knowledge-search.js", () => ({ searchAgentKnowledge: knowledgeSearchMock }));
 vi.mock("../src/modules/agent/approval-note.js", () => ({ approvalNoteDocx: approvalNoteMock }));
 vi.mock("../src/modules/deliverables/pptx-generator.js", () => ({ generatePptx: generatePptxMock, PPTX_MIME_TYPE: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }));
 vi.mock("../src/modules/deliverables/xlsx-generator.js", () => ({ generateXlsx: generateXlsxMock, XLSX_MIME_TYPE: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
 
 import { cancelRun, createRun, executeRunTool, failRun, getRun, listRuns, processRun } from "../src/modules/agent/agent.service.js";
+
+/** Rows written by the mocked run-message store, in write order. */
+let messageRows: Array<{ content: unknown }> = [];
+
+/** A tool call as the model would emit it. */
+function modelToolCall(name: string, args: unknown, id = `call-${name}`) {
+  return { id, name, argumentsJson: JSON.stringify(args) };
+}
+
+/** The terminal call the agent uses to finish a run. */
+function finalAnswer(answer: string, confidence: "high" | "medium" | "low" = "high") {
+  return modelToolCall("final.answer", { answer, confidence }, "call-final");
+}
+
+/**
+ * Scripts the loop's model turns in order.
+ *
+ * Each entry is one assistant reply; the last should finish with
+ * `final.answer` or the loop will keep asking.
+ */
+function scriptModel(
+  profile: unknown,
+  turns: Array<{ text?: string | null; toolCalls?: ReturnType<typeof modelToolCall>[] }>,
+) {
+  for (const turn of turns) {
+    invokeModelMock.mockResolvedValueOnce({
+      profile,
+      response: { text: turn.text ?? null, toolCalls: turn.toolCalls ?? [] },
+    });
+  }
+}
 
 describe("agent run access", () => {
   beforeEach(() => {
@@ -56,6 +94,16 @@ describe("agent run access", () => {
     runToolCallMock.count.mockResolvedValue(0);
     evidenceMock.findFirst.mockResolvedValue(null);
     knowledgeSearchMock.mockResolvedValue([]);
+    modelProfilesMock.mockReturnValue([localProfile, localVisionProfile]);
+
+    // The loop rebuilds its transcript from this table, so the mock has to
+    // read back what it was told to write.
+    messageRows = [];
+    runMessageMock.create.mockImplementation(async ({ data }: { data: { content: unknown } }) => {
+      messageRows.push({ content: data.content });
+      return {};
+    });
+    runMessageMock.findMany.mockImplementation(async () => messageRows);
   });
 
   it("creates a run and queue outbox event atomically", async () => {
@@ -213,355 +261,303 @@ describe("agent run access", () => {
     expect(agentRunMock.updateMany).not.toHaveBeenCalled();
   });
 
-  it("persists the selected profile when a worker fallback succeeds", async () => {
-    const run = {
-      id: "run-1",
-      workspaceId: "workspace-1",
-      requestedBy: "user-1",
-      task: "Explain preventive maintenance",
-      taskCapability: "general",
-      modelProfile: "remote-general",
-      modelReason: "persisted route",
-      dataClassification: DataClassification.PUBLIC,
-      sourceArtifactId: null,
-      status: RunStatus.PENDING,
-    };
-    const selectedProfile = {
-      id: "local-general",
-      providerId: "local-runtime",
-      location: "local",
-      baseUrl: "http://localhost:11434/v1",
-      modelId: "qwen3.5:4b",
-      capabilities: ["general", "document"],
-      priority: 1000,
-      enabled: true,
-      sovereign: true,
-      maxOutputTokens: 2048,
-    };
-    agentRunMock.findUnique.mockResolvedValue(run);
-    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
-    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
-    runToolCallMock.findUnique.mockResolvedValue(null);
-    runToolCallMock.create.mockResolvedValue({});
-    runToolCallMock.update.mockResolvedValue({});
-    runMessageMock.create.mockResolvedValue({});
-    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000099" });
-    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Use scheduled inspections.", provider: "local-runtime", modelId: "qwen3.5:4b", latencyMs: 10 } });
 
-    await processRun("run-1");
+  // ─── Loop-driven execution ────────────────────────────────────────────────
 
-    expect(agentRunMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ id: "run-1", status: RunStatus.RUNNING }),
-      data: expect.objectContaining({ modelProfile: "local-general", modelReason: expect.stringContaining("completed the model invocation") }),
-    }));
-  });
+  const localProfile = { id: "local-general", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["general", "document"], supportsTools: true, priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 8192 };
+  const localVisionProfile = { ...localProfile, id: "local-vision", capabilities: ["vision"], priority: 1001 };
 
-  it("persists retrieved citations and supplies only source evidence to the model and deliverable", async () => {
-    const artifactId = "10000000-0000-4000-8000-000000000011";
-    const sourceRef = `artifact:${artifactId}#page=4&lines=8-9`;
-    const run = {
-      id: "run-grounded",
-      workspaceId: "workspace-1",
-      requestedBy: "user-1",
-      task: "Create an approval note for the valve inspection interval",
-      taskCapability: "document",
-      modelProfile: "local-general",
-      modelReason: "persisted route",
-      dataClassification: DataClassification.INTERNAL,
-      sourceArtifactId: null,
-      status: RunStatus.PENDING,
-    };
-    const selectedProfile = { id: "local-general", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["general", "document"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
-    agentRunMock.findUnique.mockResolvedValue(run);
-    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
-    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
-    runToolCallMock.findUnique.mockResolvedValue(null);
-    runToolCallMock.create.mockResolvedValue({});
-    runToolCallMock.update.mockResolvedValue({});
-    runMessageMock.create.mockResolvedValue({});
-    evidenceMock.create
-      .mockResolvedValueOnce({ id: "20000000-0000-4000-8000-000000000011" })
-      .mockResolvedValueOnce({ id: "20000000-0000-4000-8000-000000000012" });
-    knowledgeSearchMock.mockResolvedValue([{
-      artifactId,
-      title: "Inspection manual - Valves",
-      text: "Valve V-101 must be inspected every 30 days.",
-      sourceRef,
-      score: 0.92,
-    }]);
-    // Two model calls now: the analysis, then the authored document body.
-    invokeModelMock
-      .mockResolvedValueOnce({ profile: selectedProfile, response: { text: "Inspect V-101 every 30 days." } })
-      .mockResolvedValueOnce({ profile: selectedProfile, response: { text: JSON.stringify({
-        purpose: "Confirm the valve inspection interval.",
-        findings: [{ title: "V-101 interval", detail: "Inspection is required every 30 days.", severity: "medium", citationIds: ["S1"] }],
-        recommendation: "Retain the 30-day interval.",
-      }) } });
-    approvalNoteMock.mockResolvedValue(Buffer.from("docx"));
-    artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000011", sizeBytes: 4 });
-
-    await processRun(run.id);
-
-    expect(knowledgeSearchMock).toHaveBeenCalledWith(expect.objectContaining({
-      workspaceId: run.workspaceId,
-      classification: DataClassification.INTERNAL,
-      query: run.task,
-      signal: expect.any(AbortSignal),
-    }));
-    expect(evidenceMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({
-      kind: "SOURCE",
-      artifactId,
-      sourceRef,
-      facts: ["Valve V-101 must be inspected every 30 days."],
-    }) });
-    expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: expect.stringContaining(sourceRef),
-    }));
-    // The document now carries what the model wrote, bound to citations the
-    // run actually gathered.
-    expect(approvalNoteMock).toHaveBeenCalledWith(expect.objectContaining({
-      title: run.task,
-      purpose: "Confirm the valve inspection interval.",
-      recommendation: "Retain the 30-day interval.",
-      findings: [expect.objectContaining({ severity: "medium", citationIds: ["S1"] })],
-      citations: [expect.objectContaining({ id: "S1", title: "Inspection manual - Valves", source: sourceRef })],
-    }));
-  });
-
-  it("completes the run when knowledge search fails, rather than discarding the source it already read", async () => {
-    const artifactId = "40000000-0000-4000-8000-000000000021";
-    const run = {
-      id: "run-knowledge-down",
+  function documentRun(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "run-loop",
       workspaceId: "workspace-1",
       requestedBy: "user-1",
       task: "Summarise the attached report",
       taskCapability: "document",
-      modelProfile: "remote-general",
-      modelReason: "persisted route",
-      dataClassification: DataClassification.SYNTHETIC,
-      status: "PENDING",
-      state: {},
-      maxTurns: 4,
-      maxToolCalls: 8,
-      deadlineAt: new Date(Date.now() + 60_000),
-      sourceArtifactId: null,
-    };
-    const selectedProfile = { id: "local-general", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["general", "document"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
-    agentRunMock.findUnique.mockResolvedValue(run);
-    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
-    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000099" });
-    // A provider rate limit is transient and unrelated to the user's task.
-    knowledgeSearchMock.mockRejectedValue(new Error("Embedding provider rate limit exceeded"));
-    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Summary of the report." } });
-    artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000021", sizeBytes: 4 });
-
-    await processRun(run.id);
-
-    // The run still reaches the model and completes.
-    expect(invokeModelMock).toHaveBeenCalled();
-    expect(agentRunMock.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
-    );
-    void artifactId;
-  });
-
-  it("falls back to a labelled minimal document when the model cannot author a valid body", async () => {
-    const artifactId = "40000000-0000-4000-8000-000000000011";
-    const sourceRef = `artifact:${artifactId}`;
-    const run = {
-      id: "run-fallback",
-      workspaceId: "workspace-1",
-      requestedBy: "user-1",
-      task: "Create an approval note for the valve inspection interval",
-      taskCapability: "document",
-      modelProfile: "remote-general",
-      modelReason: "persisted route",
-      dataClassification: DataClassification.INTERNAL,
-      status: "PENDING",
-      state: {},
-      maxTurns: 4,
-      maxToolCalls: 8,
-      deadlineAt: new Date(Date.now() + 60_000),
-      sourceArtifactId: null,
-    };
-    const selectedProfile = { id: "local-general", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["general", "document"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
-    agentRunMock.findUnique.mockResolvedValue(run);
-    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
-    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000099" });
-    knowledgeSearchMock.mockResolvedValue([{
-      artifactId,
-      title: "Inspection manual - Valves",
-      text: "Valve V-101 must be inspected every 30 days.",
-      sourceRef,
-      score: 0.92,
-    }]);
-    // Analysis succeeds; both authoring attempts return prose instead of JSON.
-    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Inspect V-101 every 30 days." } });
-    approvalNoteMock.mockResolvedValue(Buffer.from("docx"));
-    artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000011", sizeBytes: 4 });
-
-    await processRun(run.id);
-
-    // The run completes rather than discarding analysis that is already correct.
-    expect(approvalNoteMock).toHaveBeenCalledWith(expect.objectContaining({
-      purpose: expect.stringMatching(/Structured authoring was unavailable/),
-    }));
-    // One analysis call plus two authoring attempts before giving up.
-    expect(invokeModelMock).toHaveBeenCalledTimes(3);
-  });
-
-  it("sends a bounded original image without Docling and does not persist its bytes", async () => {
-    const run = {
-      id: "run-vision",
-      workspaceId: "workspace-1",
-      requestedBy: "user-1",
-      task: "Inspect this image",
-      taskCapability: "vision",
-      modelProfile: "local-vision",
-      modelReason: "persisted route",
-      dataClassification: DataClassification.INTERNAL,
-      sourceArtifactId: "10000000-0000-4000-8000-000000000001",
-      status: RunStatus.PENDING,
-    };
-    const source = {
-      id: "10000000-0000-4000-8000-000000000001",
-      workspaceId: "workspace-1",
-      filename: "drawing.png",
-      mimeType: "image/png",
-      detectedMimeType: "image/png",
-      objectKey: "workspace-1/drawing.png",
-      sizeBytes: 4n,
-      extractionStatus: "FAILED",
-      extractionError: "[EXTRACTION_UNAVAILABLE] Document extraction service is unavailable",
-    };
-    const selectedProfile = {
-      id: "local-vision",
-      providerId: "local-runtime",
-      location: "local",
-      baseUrl: "http://localhost:11434/v1",
-      modelId: "qwen3.5:4b",
-      capabilities: ["vision"],
-      priority: 1000,
-      enabled: true,
-      sovereign: true,
-      maxOutputTokens: 2048,
-    };
-    const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
-    agentRunMock.findUnique.mockResolvedValue(run);
-    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
-    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
-    artifactMock.find.mockResolvedValue(source);
-    extractArtifactMock.mockRejectedValue(new AppError(502, "Document extraction service is unavailable", "EXTRACTION_UNAVAILABLE"));
-    getArtifactBoundedMock.mockResolvedValue(imageBytes);
-    runToolCallMock.findUnique.mockResolvedValue(null);
-    runToolCallMock.create.mockResolvedValue({});
-    runToolCallMock.update.mockResolvedValue({});
-    runMessageMock.create.mockResolvedValue({});
-    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000099" });
-    artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000001", sizeBytes: 1 });
-    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Valve V-101 appears open.", provider: "local-runtime", modelId: "qwen3.5:4b", latencyMs: 10 } });
-
-    await processRun("run-vision");
-
-    expect(getArtifactBoundedMock).toHaveBeenCalledWith(source.objectKey, 10 * 1024 * 1024, expect.any(AbortSignal));
-    expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({
-      classification: DataClassification.INTERNAL,
-      prompt: expect.stringContaining("visual findings are not OCR-grounded"),
-      images: [{ mimeType: "image/png", bytes: imageBytes }],
-    }));
-    expect(extractArtifactMock).not.toHaveBeenCalled();
-    expect(evidenceMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ facts: [] }) });
-    const persistedCalls = JSON.stringify({ messages: runMessageMock.create.mock.calls, toolCreates: runToolCallMock.create.mock.calls, toolUpdates: runToolCallMock.update.mock.calls });
-    expect(persistedCalls).not.toContain(imageBytes.toString("base64"));
-    expect(persistedCalls).not.toContain('"bytes"');
-    expect(persistedCalls).not.toContain('"type":"Buffer"');
-    expect(persistedCalls).toContain('"mode":"original-image"');
-  });
-
-  it("uses bounded rendered PDF pages without Docling", async () => {
-    const run = {
-      id: "run-pdf",
-      workspaceId: "workspace-1",
-      requestedBy: "user-1",
-      task: "Inspect the diagram in this PDF",
-      taskCapability: "vision",
-      modelProfile: "local-vision",
-      modelReason: "persisted route",
-      dataClassification: DataClassification.CONFIDENTIAL,
-      sourceArtifactId: "10000000-0000-4000-8000-000000000002",
-      status: RunStatus.PENDING,
-    };
-    const source = { id: "10000000-0000-4000-8000-000000000002", workspaceId: "workspace-1", filename: "drawing.pdf", mimeType: "application/pdf", detectedMimeType: "application/pdf", objectKey: "workspace-1/drawing.pdf", sizeBytes: 100n, extractionStatus: "FAILED", extractionError: "[EXTRACTION_UNAVAILABLE] Document extraction service is unavailable" };
-    const selectedProfile = { id: "local-vision", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["vision"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
-    agentRunMock.findUnique.mockResolvedValue(run);
-    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
-    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
-    artifactMock.find.mockResolvedValue(source);
-    extractArtifactMock.mockRejectedValue(new AppError(502, "Document extraction service is unavailable", "EXTRACTION_UNAVAILABLE"));
-    const pdfBytes = Buffer.from("%PDF-test");
-    const pageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
-    getArtifactBoundedMock.mockResolvedValue(pdfBytes);
-    renderPdfPagesMock.mockResolvedValue({
-      pages: [{ pageNumber: 1, width: 100, height: 200, sizeBytes: pageBytes.byteLength, bytes: pageBytes }],
-      sourcePageCount: 1,
-      selectionPolicy: "all-within-limit",
-      renderer: "test-renderer",
-      rendererVersion: "1",
-      dpi: 120,
-      totalBytes: pageBytes.byteLength,
-    });
-    runToolCallMock.findUnique.mockResolvedValue(null);
-    runToolCallMock.create.mockResolvedValue({});
-    runToolCallMock.update.mockResolvedValue({});
-    runMessageMock.create.mockResolvedValue({});
-    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000099" });
-    artifactMock.create.mockResolvedValue({ id: "50000000-0000-4000-8000-000000000002", sizeBytes: 1 });
-    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Text-only finding.", provider: "local-runtime", modelId: "qwen3.5:4b", latencyMs: 10 } });
-
-    await processRun("run-pdf");
-
-    expect(getArtifactBoundedMock).toHaveBeenCalledWith(source.objectKey, expect.any(Number), expect.any(AbortSignal));
-    expect(renderPdfPagesMock).toHaveBeenCalledWith(pdfBytes, expect.any(AbortSignal));
-    expect(invokeModelMock).toHaveBeenCalledWith(expect.objectContaining({ images: [{ mimeType: "image/png", bytes: pageBytes }], prompt: expect.stringContaining("Rendered PDF pages supplied in order: 1 of 1") }));
-    expect(extractArtifactMock).not.toHaveBeenCalled();
-    expect(evidenceMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({ facts: [] }) });
-    const persistedCalls = JSON.stringify(runMessageMock.create.mock.calls);
-    expect(persistedCalls).toContain('"mode":"rendered-pdf-pages"');
-    expect(persistedCalls).toContain('"pageNumber":1');
-  });
-
-  it("requires Docling extraction for a non-vision document source", async () => {
-    const run = {
-      id: "run-document",
-      workspaceId: "workspace-1",
-      requestedBy: "user-1",
-      task: "Summarize this PDF",
-      taskCapability: "document",
       modelProfile: "local-general",
       modelReason: "persisted route",
-      dataClassification: DataClassification.INTERNAL,
-      sourceArtifactId: "10000000-0000-4000-8000-000000000003",
+      dataClassification: DataClassification.SYNTHETIC,
       status: RunStatus.PENDING,
+      state: {},
+      maxTurns: 6,
+      maxToolCalls: 8,
+      deadlineAt: new Date(Date.now() + 60_000),
+      sourceArtifactId: null,
+      conversationId: null,
+      ...overrides,
     };
-    const source = { id: run.sourceArtifactId, workspaceId: run.workspaceId, filename: "report.pdf", mimeType: "application/pdf", detectedMimeType: "application/pdf", objectKey: "workspace-1/report.pdf", sizeBytes: 100n, extractionStatus: "FAILED" };
+  }
+
+  function admitRun(run: ReturnType<typeof documentRun>) {
     agentRunMock.findUnique.mockResolvedValue(run);
-    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
+    agentRunMock.findUniqueOrThrow.mockResolvedValue(run);
     agentRunMock.updateMany.mockResolvedValue({ count: 1 });
-    artifactMock.find.mockResolvedValue(source);
-    extractArtifactMock.mockRejectedValue(new AppError(502, "Document extraction service is unavailable", "EXTRACTION_UNAVAILABLE"));
-    runToolCallMock.findUnique.mockResolvedValue(null);
-    runToolCallMock.create.mockResolvedValue({});
-    runToolCallMock.update.mockResolvedValue({});
-    runMessageMock.create.mockResolvedValue({});
+    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000001" });
+  }
 
-    await expect(processRun(run.id)).rejects.toMatchObject({ code: "EXTRACTION_UNAVAILABLE" });
+  it("lets the model choose its tools instead of following a fixed order", async () => {
+    const run = documentRun();
+    admitRun(run);
+    knowledgeSearchMock.mockResolvedValue([]);
+    scriptModel(localProfile, [
+      { toolCalls: [modelToolCall("knowledge.search", { query: "retirement thickness" })] },
+      { toolCalls: [finalAnswer("Retirement thickness is 6.53 mm.")] },
+    ]);
 
-    expect(extractArtifactMock).toHaveBeenCalledWith(source.id, expect.any(AbortSignal));
-    expect(renderPdfPagesMock).not.toHaveBeenCalled();
-    expect(invokeModelMock).not.toHaveBeenCalled();
-    expect(runToolCallMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ output: expect.objectContaining({ errorCode: "EXTRACTION_UNAVAILABLE" }) }),
+    await processRun(run.id);
+
+    expect(knowledgeSearchMock).toHaveBeenCalledOnce();
+    expect(agentRunMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: RunStatus.COMPLETED,
+        result: expect.objectContaining({ analysis: "Retirement thickness is 6.53 mm." }),
+      }),
     }));
+  });
+
+  it("iterates: a tool result informs the next decision", async () => {
+    const run = documentRun();
+    admitRun(run);
+    knowledgeSearchMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ artifactId: "20000000-0000-4000-8000-000000000001", title: "SOP", text: "Alert at 7.00 mm.", sourceRef: "artifact:20000000-0000-4000-8000-000000000001", score: 0.9 }]);
+    scriptModel(localProfile, [
+      { toolCalls: [modelToolCall("knowledge.search", { query: "first attempt" }, "c1")] },
+      // Nothing came back, so the agent tries a different query rather than
+      // answering from an empty result.
+      { toolCalls: [modelToolCall("knowledge.search", { query: "second attempt" }, "c2")] },
+      { toolCalls: [finalAnswer("The alert threshold is 7.00 mm.")] },
+    ]);
+
+    await processRun(run.id);
+
+    expect(knowledgeSearchMock).toHaveBeenCalledTimes(2);
+    expect(knowledgeSearchMock.mock.calls[1]![0]).toMatchObject({ query: "second attempt" });
+  });
+
+  it("records the answer's confidence and what it could not resolve", async () => {
+    const run = documentRun();
+    admitRun(run);
+    invokeModelMock.mockResolvedValueOnce({
+      profile: localProfile,
+      response: {
+        text: null,
+        toolCalls: [modelToolCall("final.answer", {
+          answer: "Partially answered.",
+          confidence: "low",
+          unresolved: ["No inspection date was given."],
+        }, "call-final")],
+      },
+    });
+
+    await processRun(run.id);
+
+    expect(agentRunMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        result: expect.objectContaining({
+          confidence: "low",
+          unresolved: ["No inspection date was given."],
+        }),
+      }),
+    }));
+  });
+
+  it("feeds a tool failure back so the run still completes", async () => {
+    const run = documentRun();
+    admitRun(run);
+    knowledgeSearchMock.mockRejectedValue(new Error("Embedding provider rate limit exceeded"));
+    scriptModel(localProfile, [
+      { toolCalls: [modelToolCall("knowledge.search", { query: "anything" })] },
+      { toolCalls: [finalAnswer("Answered without citations.")] },
+    ]);
+
+    await processRun(run.id);
+
+    // A failing tool costs a turn, not the run.
+    expect(agentRunMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: RunStatus.COMPLETED }),
+    }));
+  });
+
+  it("suspends for approval before running code, without failing the run", async () => {
+    const run = documentRun({ id: "run-approval", task: "Run a calculation" });
+    admitRun(run);
+    runToolCallMock.findUnique.mockResolvedValue(null);
+    runToolCallMock.create.mockResolvedValue({ id: "tool-call-1" });
+    toolApprovalMock.create.mockResolvedValue({ id: "approval-1" });
+    scriptModel(localProfile, [
+      { toolCalls: [modelToolCall("sandbox.execute", { language: "python", code: "print(1)" })] },
+    ]);
+
+    await processRun(run.id);
+
+    // The sandbox never ran, the run is not marked failed, and an approval was
+    // requested — the run is parked, waiting.
+    expect(runCodeMock).not.toHaveBeenCalled();
+    expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ eventType: "TOOL_APPROVAL_REQUESTED" }));
+    expect(agentRunMock.updateMany).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: RunStatus.FAILED }),
+    }));
+  });
+
+  it("attaches rendered pages to the opening turn for a vision run", async () => {
+    const artifactId = "30000000-0000-4000-8000-000000000001";
+    const run = documentRun({ id: "run-vision", task: "Inspect this drawing", taskCapability: "vision", modelProfile: "local-vision", sourceArtifactId: artifactId });
+    admitRun(run);
+    artifactMock.find.mockResolvedValue({
+      id: artifactId,
+      workspaceId: "workspace-1",
+      filename: "drawing.png",
+      detectedMimeType: "image/png",
+      objectKey: "artifacts/drawing.png",
+      sizeBytes: BigInt(1024),
+      extractionStatus: "PENDING",
+    });
+    getArtifactBoundedMock.mockResolvedValue(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const visionProfile = { ...localProfile, id: "local-vision", capabilities: ["vision"] };
+    scriptModel(visionProfile, [{ toolCalls: [finalAnswer("A P&ID excerpt.")] }]);
+
+    await processRun(run.id);
+
+    const [{ messages }] = invokeModelMock.mock.calls[0]!;
+    const opening = messages[0];
+    expect(Array.isArray(opening.content)).toBe(true);
+    expect(opening.content.some((part: { type: string }) => part.type === "image")).toBe(true);
+    // Image bytes must not reach run telemetry.
+    expect(JSON.stringify(runMessageMock.create.mock.calls)).not.toContain('"type":"Buffer"');
+  });
+
+  it("re-routes to a vision profile when the agent asks to look at the document", async () => {
+    // The run starts on a text profile because the PDF extracted fine. The
+    // agent then finds the text useless and asks to see the page, which is a
+    // need it discovers — it never names a model.
+    const artifactId = "30000000-0000-4000-8000-000000000004";
+    const run = documentRun({ id: "run-escalate", sourceArtifactId: artifactId });
+    admitRun(run);
+    artifactMock.find.mockResolvedValue({
+      id: artifactId,
+      workspaceId: "workspace-1",
+      filename: "drawing.pdf",
+      detectedMimeType: "application/pdf",
+      objectKey: "artifacts/drawing.pdf",
+      sizeBytes: BigInt(4096),
+      extractionStatus: "COMPLETED",
+    });
+    extractArtifactMock.mockResolvedValue({ text: "Sheet 3 of 8. See drawing." });
+    getArtifactBoundedMock.mockResolvedValue(Buffer.from([0x25, 0x50, 0x44, 0x46]));
+    renderPdfPagesMock.mockResolvedValue({
+      pages: [{ pageNumber: 1, bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47]), width: 800, height: 600, sizeBytes: 4 }],
+      sourcePageCount: 8,
+      selectionPolicy: "first-page",
+      renderer: "test",
+      rendererVersion: "1",
+      dpi: 150,
+      totalBytes: 4,
+    });
+    scriptModel(localProfile, [
+      { toolCalls: [modelToolCall("artifact.inspectVisually", { reason: "The text only refers to the drawing." })] },
+    ]);
+    scriptModel(localVisionProfile, [{ toolCalls: [finalAnswer("The drawing shows a flanged tee.")] }]);
+
+    await processRun(run.id);
+
+    const [first, second] = invokeModelMock.mock.calls;
+    expect(first![0].decision.capability).toBe("general");
+    // The turn after the request is routed on the new requirement.
+    expect(second![0].decision.capability).toBe("vision");
+    expect(second![0].decision.profile.id).toBe("local-vision");
+    // The pages arrive as their own turn, carrying real image parts.
+    const attached = second![0].messages.at(-1);
+    expect(attached.role).toBe("user");
+    expect(attached.content.some((part: { type: string }) => part.type === "image")).toBe(true);
+    // The opening turn must not have been rewritten to carry them.
+    expect(Array.isArray(second![0].messages[0].content)).toBe(false);
+    // Image bytes must not reach durable run messages.
+    expect(JSON.stringify(runMessageMock.create.mock.calls)).not.toContain('"type":"Buffer"');
+  });
+
+  it("extracts an attached document even when inference never runs", async () => {
+    // Extraction used to be guaranteed by a fixed first phase. Now that the
+    // model chooses its own tools, a run whose inference fails must still have
+    // read its own attachment — otherwise the document is left unextracted
+    // because nothing ever asked for it.
+    const artifactId = "30000000-0000-4000-8000-000000000002";
+    const run = documentRun({ id: "run-extract", sourceArtifactId: artifactId });
+    admitRun(run);
+    artifactMock.find.mockResolvedValue({
+      id: artifactId,
+      workspaceId: "workspace-1",
+      filename: "note.pdf",
+      detectedMimeType: "application/pdf",
+      objectKey: "artifacts/note.pdf",
+      sizeBytes: BigInt(2048),
+      extractionStatus: "PENDING",
+    });
+    invokeModelMock.mockRejectedValue(new Error("no inference backend reachable"));
+
+    await processRun(run.id).catch(() => undefined);
+
+    expect(extractArtifactMock).toHaveBeenCalledWith(artifactId, expect.anything());
+  });
+
+  it("does not fail the run when extracting the attachment fails", async () => {
+    // The agent gets the failure as a tool error when it calls artifact.read,
+    // which it can act on; ending the run before it starts tells the user less.
+    const artifactId = "30000000-0000-4000-8000-000000000003";
+    const run = documentRun({ id: "run-extract-fails", sourceArtifactId: artifactId });
+    admitRun(run);
+    artifactMock.find.mockResolvedValue({
+      id: artifactId,
+      workspaceId: "workspace-1",
+      filename: "note.pdf",
+      detectedMimeType: "application/pdf",
+      objectKey: "artifacts/note.pdf",
+      sizeBytes: BigInt(2048),
+      extractionStatus: "PENDING",
+    });
+    extractArtifactMock.mockRejectedValue(new Error("docling unavailable"));
+    scriptModel(localProfile, [{ toolCalls: [finalAnswer("Could not read the attachment.")] }]);
+
+    await processRun(run.id);
+
+    expect(agentRunMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: RunStatus.COMPLETED }),
+    }));
+  });
+
+  it("offers the tools with their schemas on every turn", async () => {
+    const run = documentRun();
+    admitRun(run);
+    scriptModel(localProfile, [{ toolCalls: [finalAnswer("Done.")] }]);
+
+    await processRun(run.id);
+
+    const [{ tools, toolChoice }] = invokeModelMock.mock.calls[0]!;
+    const names = tools.map((tool: { name: string }) => tool.name);
+    expect(names).toContain("final.answer");
+    expect(names).toContain("knowledge.search");
+    expect(toolChoice).toBe("auto");
+    // Schemas travel with the tools, so the model knows the argument shape.
+    expect(tools.every((tool: { parameters: unknown }) => typeof tool.parameters === "object")).toBe(true);
+  });
+
+  it("checkpoints each iteration so a resumed run does not repeat work", async () => {
+    const run = documentRun();
+    admitRun(run);
+    knowledgeSearchMock.mockResolvedValue([]);
+    scriptModel(localProfile, [
+      { toolCalls: [modelToolCall("knowledge.search", { query: "a" })] },
+      { toolCalls: [finalAnswer("Done.")] },
+    ]);
+
+    await processRun(run.id);
+
+    expect(agentRunMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ state: expect.objectContaining({ version: 2, iteration: expect.any(Number) }) }),
+    }));
+    // The transcript is what a resumed run reads back.
+    const transcriptRows = messageRows.filter((row) => (row.content as { kind?: string }).kind === "transcript");
+    expect(transcriptRows.length).toBeGreaterThan(2);
   });
 
   it("does not overwrite a cancelled run after worker failure", async () => {
@@ -732,167 +728,4 @@ describe("agent run access", () => {
     expect(rejectedWork).not.toHaveBeenCalled();
   });
 
-  it("persists validated generated code before requesting exact sandbox approval", async () => {
-    const run = {
-      id: "run-code",
-      workspaceId: "workspace-1",
-      requestedBy: "user-1",
-      task: "Write Python code that prints one",
-      taskCapability: "code",
-      modelProfile: "local-code",
-      modelReason: "persisted route",
-      dataClassification: DataClassification.CONFIDENTIAL,
-      sourceArtifactId: null,
-      status: RunStatus.PENDING,
-    };
-    const selectedProfile = {
-      id: "local-code",
-      providerId: "local-runtime",
-      location: "local",
-      baseUrl: "http://localhost:11434/v1",
-      modelId: "qwen2.5-coder:7b",
-      capabilities: ["code"],
-      priority: 1000,
-      enabled: true,
-      sovereign: true,
-      maxOutputTokens: 2048,
-    };
-    const generated = { language: "python", code: "print(1)", explanation: "Prints one." };
-    agentRunMock.findUnique.mockResolvedValue(run);
-    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
-    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
-    runToolCallMock.findUnique.mockResolvedValue(null);
-    runToolCallMock.create.mockResolvedValue({ id: "20000000-0000-4000-8000-000000000001" });
-    runToolCallMock.update.mockResolvedValue({});
-    runMessageMock.create.mockResolvedValue({});
-    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000001" });
-    artifactMock.create.mockResolvedValue({ id: "30000000-0000-4000-8000-000000000001", sizeBytes: 8 });
-    toolApprovalMock.create.mockResolvedValue({ id: "40000000-0000-4000-8000-000000000001" });
-    invokeModelMock
-      .mockResolvedValueOnce({ profile: selectedProfile, response: { text: "```python\nprint(1)\n```" } })
-      .mockResolvedValueOnce({ profile: selectedProfile, response: { text: JSON.stringify(generated) } });
-
-    await expect(processRun(run.id)).resolves.toBeUndefined();
-
-    expect(invokeModelMock).toHaveBeenCalledTimes(2);
-    expect(invokeModelMock.mock.calls[1][0].prompt).toContain("Repair it once");
-    expect(artifactMock.create).toHaveBeenCalledWith(expect.objectContaining({
-      kind: "CODE_OUTPUT",
-      classification: DataClassification.CONFIDENTIAL,
-      bytes: Buffer.from(generated.code),
-    }));
-    expect(toolApprovalMock.create).toHaveBeenCalledWith({ data: expect.objectContaining({
-      toolName: "sandbox.execute",
-      toolInput: { language: generated.language, code: generated.code },
-    }) });
-    expect(runCodeMock).not.toHaveBeenCalled();
-    const codeArtifactCall = artifactMock.create.mock.invocationCallOrder[0];
-    const approvalCall = toolApprovalMock.create.mock.invocationCallOrder[0];
-    expect(codeArtifactCall).toBeLessThan(approvalCall);
-  });
-
-  it("resumes with the persisted approved code and fails a non-zero sandbox result", async () => {
-    const generated = { language: "javascript", code: "process.exit(7)", explanation: "Exercises failure handling." };
-    const run = {
-      id: "run-code-resume",
-      workspaceId: "workspace-1",
-      requestedBy: "user-1",
-      task: "Write JavaScript failure handling code",
-      taskCapability: "code",
-      modelProfile: "local-code",
-      modelReason: "persisted route",
-      dataClassification: DataClassification.INTERNAL,
-      sourceArtifactId: null,
-      status: RunStatus.PENDING,
-      state: { version: 1, phase: "ACTION", turn: 3, phaseStarted: true },
-      maxTurns: 4,
-      maxToolCalls: 5,
-      deadlineAt: new Date(Date.now() + 60_000),
-    };
-    agentRunMock.findUnique.mockResolvedValue(run);
-    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
-    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
-    runToolCallMock.findUnique
-      .mockResolvedValueOnce({ status: RunToolCallStatus.COMPLETED, output: { ok: true, summary: "generated", data: { characters: generated.code.length, analysis: generated.explanation, generatedCode: generated, modelProfile: "local-code" } } })
-      .mockResolvedValueOnce({ status: RunToolCallStatus.COMPLETED, output: { ok: true, summary: "persisted", data: { artifactId: "30000000-0000-4000-8000-000000000001" } } })
-      .mockResolvedValueOnce({ id: "20000000-0000-4000-8000-000000000001", modelToolCallId: "sandbox-call", status: RunToolCallStatus.WAITING_APPROVAL, input: { language: generated.language, code: generated.code } });
-    runToolCallMock.updateMany.mockResolvedValue({ count: 1 });
-    runToolCallMock.update.mockResolvedValue({});
-    toolApprovalMock.findUnique.mockResolvedValue({ status: ApprovalStatus.APPROVED });
-    evidenceMock.create.mockResolvedValue({ id: "10000000-0000-4000-8000-000000000001" });
-    runMessageMock.create.mockResolvedValue({});
-    runCodeMock.mockResolvedValue({ stdout: "", stderr: "failed", exitCode: 7 });
-
-    await expect(processRun(run.id)).rejects.toMatchObject({ code: "SANDBOX_NON_ZERO_EXIT" });
-
-    expect(invokeModelMock).not.toHaveBeenCalled();
-    expect(artifactMock.create).not.toHaveBeenCalled();
-    expect(runCodeMock).toHaveBeenCalledWith(generated.code, generated.language, expect.any(AbortSignal));
-    expect(runToolCallMock.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        status: RunToolCallStatus.FAILED,
-        output: expect.objectContaining({ ok: false, errorCode: "SANDBOX_NON_ZERO_EXIT" }),
-      }),
-    }));
-  });
-
-  it("selects PPTX from task wording and persists a classified cited artifact", async () => {
-    const sourceId = "10000000-0000-4000-8000-000000000001";
-    const sourceEvidenceId = "20000000-0000-4000-8000-000000000001";
-    const run = {
-      id: "run-pptx",
-      workspaceId: "workspace-1",
-      requestedBy: "user-1",
-      task: "Create a PowerPoint presentation from this report",
-      taskCapability: "document",
-      modelProfile: "local-general",
-      modelReason: "persisted route",
-      dataClassification: DataClassification.CONFIDENTIAL,
-      sourceArtifactId: sourceId,
-      status: RunStatus.PENDING,
-    };
-    const source = { id: sourceId, workspaceId: "workspace-1", filename: "report.txt", mimeType: "text/plain", detectedMimeType: "text/plain", objectKey: "workspace-1/report.txt", sizeBytes: 20n };
-    const selectedProfile = { id: "local-general", providerId: "local-runtime", location: "local", baseUrl: "http://localhost:11434/v1", modelId: "qwen3.5:4b", capabilities: ["general", "document"], priority: 1000, enabled: true, sovereign: true, maxOutputTokens: 2048 };
-    agentRunMock.findUnique.mockResolvedValue(run);
-    agentRunMock.findUniqueOrThrow.mockResolvedValue({ ...run, status: RunStatus.RUNNING });
-    agentRunMock.updateMany.mockResolvedValue({ count: 1 });
-    artifactMock.find.mockResolvedValue(source);
-    extractArtifactMock.mockResolvedValue({ text: "Valve V-101 requires inspection.", metadata: {} });
-    runToolCallMock.findUnique.mockResolvedValue(null);
-    runToolCallMock.create.mockResolvedValue({});
-    runToolCallMock.update.mockResolvedValue({});
-    runMessageMock.create.mockResolvedValue({});
-    evidenceMock.create
-      .mockResolvedValueOnce({ id: sourceEvidenceId })
-      .mockResolvedValueOnce({ id: "30000000-0000-4000-8000-000000000001" });
-    invokeModelMock.mockResolvedValue({ profile: selectedProfile, response: { text: "Inspect valve V-101." } });
-    generatePptxMock.mockResolvedValue(Buffer.from("pptx"));
-    artifactMock.create.mockResolvedValue({ id: "40000000-0000-4000-8000-000000000001", sizeBytes: 4 });
-
-    await processRun(run.id);
-
-    expect(generatePptxMock).toHaveBeenCalledWith(expect.objectContaining({
-      citations: [expect.objectContaining({ source: `artifact:${sourceId}` })],
-      sections: [expect.objectContaining({ findings: [expect.objectContaining({ citationIds: ["S1"] })] })],
-    }));
-    expect(generateXlsxMock).not.toHaveBeenCalled();
-    expect(artifactMock.create).toHaveBeenCalledWith(expect.objectContaining({
-      filename: "presentation-run-pptx.pptx",
-      mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      classification: DataClassification.CONFIDENTIAL,
-      idempotencyKey: "run-run-pptx-pptx",
-    }));
-  });
-
-  it("enforces the snapshotted tool-call limit before creating another call", async () => {
-    runToolCallMock.findUnique.mockResolvedValue(null);
-    runToolCallMock.count.mockResolvedValue(5);
-
-    await expect(executeRunTool("run-1", "artifact.read", {
-      artifactId: "10000000-0000-4000-8000-000000000001",
-      extractionVersion: "canonical-v1",
-    }, vi.fn(), undefined, { workspaceId: "workspace-1", leaseId: "lease-1", maxToolCalls: 5 })).rejects.toMatchObject({ code: "RUN_TOOL_CALL_LIMIT_EXCEEDED" });
-
-    expect(runToolCallMock.create).not.toHaveBeenCalled();
-  });
 });

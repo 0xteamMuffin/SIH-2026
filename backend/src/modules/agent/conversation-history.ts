@@ -1,5 +1,6 @@
 import { RunStatus } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
+import { logger } from "../../lib/logger.js";
 
 /**
  * Prior turns of a chat thread, loaded so a follow-up can refer to what has
@@ -48,6 +49,24 @@ export async function loadConversationHistory(input: {
     take: MAX_TURNS,
     select: { task: true, result: true },
   });
+
+  // A conversation belongs to one workspace, and the scoping above is what
+  // stops a caller from pulling another workspace's thread into its prompt by
+  // supplying its id. But scoping also means a client that moves a thread
+  // between workspaces gets an empty history and no complaint, which reads as
+  // "no earlier turns" and is very hard to see from the outside. So say so.
+  if (runs.length === 0) {
+    const elsewhere = await prisma.agentRun.findFirst({
+      where: { conversationId: input.conversationId, workspaceId: { not: input.workspaceId } },
+      select: { workspaceId: true },
+    });
+    if (elsewhere) {
+      logger.warn(
+        { conversationId: input.conversationId, requestedWorkspaceId: input.workspaceId, foundInWorkspaceId: elsewhere.workspaceId },
+        "Conversation history is empty because earlier turns belong to a different workspace",
+      );
+    }
+  }
 
   const turns: ConversationTurn[] = [];
   let budget = MAX_TOTAL_CHARS;
