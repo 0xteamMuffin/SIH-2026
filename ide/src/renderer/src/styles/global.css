@@ -3,30 +3,35 @@
  * so the desktop client reads as the same product.
  */
 :root {
-  --ink: #f5f5f7;
-  --ink-2: #a1a1aa;
-  --ink-3: #52525b;
-  --canvas: #090909;
-  --surface: #121214;
-  --surface-2: #17171a;
-  --field: rgba(255, 255, 255, 0.04);
-  --hover: rgba(255, 255, 255, 0.06);
-  --line: rgba(255, 255, 255, 0.08);
-  --line-strong: rgba(255, 255, 255, 0.14);
-  --accent: #f97316;
-  --accent-dim: rgba(249, 115, 22, 0.14);
-  --accent-line: rgba(249, 115, 22, 0.32);
-  --green: #4ade80;
-  --red: #f87171;
+  --ink: #f9fafb;
+  --ink-2: #d1d5db;
+  --ink-3: #6b7280;
+  --canvas: #0b0d0f;
+  --surface: #13171b;
+  --surface-2: #1f2933;
+  --field: rgba(31, 41, 51, 0.78);
+  --hover: rgba(156, 163, 175, 0.1);
+  --line: rgba(156, 163, 175, 0.2);
+  --line-strong: #6b7280;
+  --accent: #d1d5db;
+  --accent-dim: rgba(209, 213, 219, 0.1);
+  --accent-line: rgba(209, 213, 219, 0.3);
+  --green: #6b7280;
+  --red: #6b7280;
+  --graph-active: #9db9d2;
+  --graph-active-dim: rgba(157, 185, 210, 0.15);
+  --graph-complete: #9ac5b8;
+  --graph-failed: #d79aa5;
 
   /* Diff surfaces, tuned to stay legible on the dark canvas. */
-  --diff-add-bg: rgba(74, 222, 128, 0.11);
-  --diff-add-ink: #86efac;
-  --diff-del-bg: rgba(248, 113, 113, 0.11);
-  --diff-del-ink: #fca5a5;
+  --diff-add-bg: rgba(156, 163, 175, 0.1);
+  --diff-add-ink: #d1d5db;
+  --diff-del-bg: rgba(107, 114, 128, 0.18);
+  --diff-del-ink: #9ca3af;
 
   --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --font-mono:
+    ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 
   --sidebar-width: 260px;
   --panel-width: 46%;
@@ -51,7 +56,13 @@ body {
   font-size: 14px;
   line-height: 1.55;
   color: var(--ink);
-  background: var(--canvas);
+  background:
+    radial-gradient(
+      ellipse 52% 38% at 0% 0%,
+      rgba(156, 163, 175, 0.07),
+      transparent 72%
+    ),
+    var(--canvas);
   -webkit-font-smoothing: antialiased;
   /* A desktop shell should not rubber-band like a web page. */
   overflow: hidden;
@@ -132,7 +143,13 @@ pre {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--surface);
+  background:
+    radial-gradient(
+      ellipse 70% 42% at 0% 0%,
+      rgba(156, 163, 175, 0.08),
+      transparent 76%
+    ),
+    var(--surface);
   border-right: 1px solid var(--line);
 }
 
@@ -164,7 +181,7 @@ pre {
 }
 
 .sidebar__new:hover {
-  background: rgba(249, 115, 22, 0.22);
+  background: rgba(209, 213, 219, 0.16);
 }
 
 .sidebar__list {
@@ -269,8 +286,8 @@ pre {
   padding: 9px 14px;
   font-size: 12.5px;
   color: var(--red);
-  background: rgba(248, 113, 113, 0.1);
-  border-bottom: 1px solid rgba(248, 113, 113, 0.25);
+  background: rgba(107, 114, 128, 0.1);
+  border-bottom: 1px solid rgba(107, 114, 128, 0.25);
 }
 
 /* ── Thread ────────────────────────────────────────────────────────────── */
@@ -418,7 +435,7 @@ pre {
 .markdown code {
   padding: 1.5px 5px;
   font-size: 12px;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(107, 114, 128, 0.1);
   border: 1px solid var(--line);
   border-radius: 4px;
 }
@@ -426,7 +443,7 @@ pre {
 .markdown pre {
   padding: 12px;
   overflow-x: auto;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(107, 114, 128, 0.1);
   border: 1px solid var(--line);
   border-radius: 9px;
 }
@@ -458,7 +475,7 @@ pre {
 
 .markdown th {
   color: var(--ink-2);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(249, 250, 251, 0.03);
 }
 
 /* ── Status line ───────────────────────────────────────────────────────── */
@@ -616,7 +633,7 @@ pre {
   font-size: 11px;
   color: var(--ink-3);
   text-align: left;
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(249, 250, 251, 0.02);
   border-top: 1px solid var(--line);
   caption-side: top;
 }
@@ -736,7 +753,7 @@ pre {
   padding: 9px 13px;
   font-size: 11.5px;
   color: var(--ink-3);
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(107, 114, 128, 0.08);
   border-top: 1px solid var(--line);
 }
 
@@ -744,7 +761,7 @@ pre {
   max-height: 560px;
   overflow: auto;
   border-top: 1px solid var(--line);
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(107, 114, 128, 0.08);
 }
 
 /* ── Preview shared chrome ─────────────────────────────────────────────── */
@@ -781,7 +798,7 @@ pre {
   padding: 7px 13px;
   font-size: 11px;
   color: var(--ink-3);
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(249, 250, 251, 0.02);
   border-top: 1px solid var(--line);
 }
 
@@ -1085,7 +1102,7 @@ pre {
   width: 30px;
   height: 30px;
   font-size: 15px;
-  color: #fff;
+  color: #f9fafb;
   background: var(--accent);
   border-radius: 8px;
 }
@@ -1099,8 +1116,8 @@ pre {
   padding: 6px 13px;
   font-size: 12.5px;
   color: var(--red);
-  background: rgba(248, 113, 113, 0.12);
-  border: 1px solid rgba(248, 113, 113, 0.28);
+  background: rgba(107, 114, 128, 0.12);
+  border: 1px solid rgba(107, 114, 128, 0.28);
   border-radius: 8px;
 }
 
@@ -1172,7 +1189,7 @@ pre {
 .browser__progress {
   flex-shrink: 0;
   height: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background: var(--line-strong);
   background-size: 40% 100%;
   animation: indeterminate 1.1s ease-in-out infinite;
 }
@@ -1191,8 +1208,8 @@ pre {
   padding: 8px 12px;
   font-size: 11.5px;
   color: var(--red);
-  background: rgba(248, 113, 113, 0.1);
-  border-bottom: 1px solid rgba(248, 113, 113, 0.22);
+  background: rgba(107, 114, 128, 0.1);
+  border-bottom: 1px solid rgba(107, 114, 128, 0.22);
 }
 
 /*
@@ -1222,7 +1239,11 @@ pre {
   justify-content: center;
   height: 100%;
   background:
-    radial-gradient(ellipse 70% 50% at 50% 0%, rgba(249, 115, 22, 0.09), transparent 70%),
+    radial-gradient(
+      ellipse 62% 42% at 100% 0%,
+      rgba(156, 163, 175, 0.06),
+      transparent 74%
+    ),
     var(--canvas);
 }
 
@@ -1276,7 +1297,7 @@ pre {
   padding: 10px;
   font-size: 13.5px;
   font-weight: 600;
-  color: #fff;
+  color: #f9fafb;
   background: var(--accent);
   border-radius: 9px;
 }
@@ -1406,7 +1427,7 @@ pre {
   flex-direction: column;
   gap: 10px;
   padding: 13px;
-  background: rgba(249, 115, 22, 0.06);
+  background: rgba(55, 65, 81, 0.06);
   border: 1px solid var(--accent-line);
   border-radius: 10px;
 }
@@ -1427,7 +1448,7 @@ pre {
 
 .approval__risk--high {
   color: var(--red);
-  background: rgba(248, 113, 113, 0.14);
+  background: rgba(107, 114, 128, 0.14);
 }
 
 .approval__risk--medium,
@@ -1456,7 +1477,7 @@ pre {
   line-height: 1.5;
   color: var(--ink-2);
   white-space: pre-wrap;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(107, 114, 128, 0.1);
   border: 1px solid var(--line);
   border-radius: 7px;
 }
@@ -1475,14 +1496,14 @@ pre {
 }
 
 .approval__approve {
-  color: #fff;
+  color: #f9fafb;
   background: var(--accent);
 }
 
 .approval__reject {
   color: var(--red);
-  background: rgba(248, 113, 113, 0.12);
-  border: 1px solid rgba(248, 113, 113, 0.28);
+  background: rgba(107, 114, 128, 0.12);
+  border: 1px solid rgba(107, 114, 128, 0.28);
 }
 
 .approval__decided {
@@ -1681,7 +1702,7 @@ pre {
   line-height: 1.5;
   color: var(--ink-2);
   white-space: pre-wrap;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(107, 114, 128, 0.1);
   border: 1px solid var(--line);
   border-radius: 7px;
 }
@@ -1694,12 +1715,14 @@ pre {
   gap: 6px;
   width: 260px;
   padding: 12px 14px;
-  background: rgba(16, 16, 18, 0.96);
+  background: rgba(19, 23, 27, 0.96);
   border: 1px solid var(--line);
   border-radius: 11px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.55);
   cursor: pointer;
-  transition: border-color 150ms ease, transform 150ms ease;
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
 }
 
 .trace-node:hover {
@@ -1707,8 +1730,10 @@ pre {
 }
 
 .trace-node--selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-dim), 0 6px 24px rgba(0, 0, 0, 0.7);
+  border-color: var(--graph-active);
+  box-shadow:
+    0 0 0 2px var(--graph-active-dim),
+    0 6px 24px rgba(0, 0, 0, 0.7);
 }
 
 .trace-node__port {
@@ -1727,7 +1752,7 @@ pre {
 }
 
 .trace-node__badge--accent {
-  color: var(--accent);
+  color: var(--graph-active);
 }
 
 .trace-node__row {
@@ -1794,15 +1819,34 @@ pre {
   color: var(--ink-3);
 }
 
-.trace-node--tool { border-left: 3px solid var(--line-strong); }
-.trace-node--tool.is-completed { border-left-color: var(--green); }
-.trace-node--tool.is-completed .trace-node__state { color: var(--green); }
-.trace-node--tool.is-failed { border-left-color: var(--red); }
-.trace-node--tool.is-failed .trace-node__state { color: var(--red); }
-.trace-node--tool.is-running { border-left-color: var(--accent); }
-.trace-node--tool.is-running .trace-node__state { color: var(--accent); }
+.trace-node--tool {
+  border-left: 3px solid var(--line-strong);
+}
+.trace-node--tool.is-completed {
+  border-left-color: var(--graph-complete);
+}
+.trace-node--tool.is-completed .trace-node__state {
+  color: var(--graph-complete);
+}
+.trace-node--tool.is-failed {
+  border-left-color: var(--graph-failed);
+}
+.trace-node--tool.is-failed .trace-node__state {
+  color: var(--graph-failed);
+}
+.trace-node--tool.is-running {
+  border-left-color: var(--graph-active);
+}
+.trace-node--tool.is-running .trace-node__state {
+  color: var(--graph-active);
+}
 
-.trace-node--agent { border-color: var(--accent-line); }
+.trace-node--agent {
+  border-color: rgba(157, 185, 210, 0.46);
+  box-shadow:
+    inset 0 1px 0 rgba(157, 185, 210, 0.1),
+    0 4px 20px rgba(0, 0, 0, 0.55);
+}
 
 .trace-node--end {
   width: 180px;
@@ -1816,5 +1860,9 @@ pre {
   color: var(--ink-2);
 }
 
-.trace-node--end.is-completed .trace-node__outcome { color: var(--green); }
-.trace-node--end.is-failed .trace-node__outcome { color: var(--red); }
+.trace-node--end.is-completed .trace-node__outcome {
+  color: var(--graph-complete);
+}
+.trace-node--end.is-failed .trace-node__outcome {
+  color: var(--graph-failed);
+}
