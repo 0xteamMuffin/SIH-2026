@@ -4,6 +4,10 @@ services:
   minio:
     ports: !reset []
   backend:
+    # The sovereign stack publishes nothing: no host port, and no `edge`
+    # membership that would give the API outside reachability.
+    ports: !reset []
+    networks: !override [internal]
     environment:
       APP_MODE: sovereign
       ALLOW_REMOTE_INFERENCE: "false"

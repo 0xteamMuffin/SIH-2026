@@ -225,7 +225,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks: [internal]
+    # `internal` is a closed network and cannot publish, so the backend joins
+    # `edge` to make the published API port reachable from the host — the same
+    # pattern the frontend uses for its browser port. The sovereign override
+    # drops both the port and `edge` again.
+    networks: [internal, edge]
 
   worker:
     build: ./backend
