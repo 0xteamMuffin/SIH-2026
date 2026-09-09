@@ -3,6 +3,8 @@ import { useState } from "react";
 import type { DocumentKind, DocumentRef, PreviewCapabilities } from "@shared/types.js";
 
 import { viewerFor } from "../preview/registry.js";
+import { Icon, type IconName } from "../ui/Icon.js";
+import { IconButton } from "../ui/IconButton.js";
 
 const KIND_LABELS: Record<DocumentKind, string> = {
   pdf: "PDF",
@@ -13,13 +15,13 @@ const KIND_LABELS: Record<DocumentKind, string> = {
   unknown: "File",
 };
 
-const KIND_ICONS: Record<DocumentKind, string> = {
-  pdf: "▤",
-  spreadsheet: "▦",
-  wordprocessing: "▤",
-  image: "◲",
-  text: "≡",
-  unknown: "▤",
+const KIND_ICONS: Record<DocumentKind, IconName> = {
+  pdf: "file-text",
+  spreadsheet: "table",
+  wordprocessing: "file-text",
+  image: "image",
+  text: "code",
+  unknown: "file",
 };
 
 export interface DocumentCardProps {
@@ -58,49 +60,59 @@ export function DocumentCard({ document, capabilities }: DocumentCardProps): Rea
   return (
     <figure className="document-card">
       <div className="document-card__header">
-        <span className="document-card__icon" aria-hidden="true">
-          {KIND_ICONS[document.kind]}
+        <span className="document-card__icon">
+          <Icon name={KIND_ICONS[document.kind]} size={16} />
         </span>
 
         <span className="document-card__meta">
-          <span className="document-card__name">{document.filename}</span>
+          <span className="document-card__name" title={document.filename}>
+            {document.filename}
+          </span>
           <span className="document-card__sub">
-            {KIND_LABELS[document.kind]} · {formatBytes(document.byteSize)}
+            <span>{KIND_LABELS[document.kind]}</span>
+            <span aria-hidden="true">·</span>
+            <span className="mono">{formatBytes(document.byteSize)}</span>
           </span>
         </span>
 
         <span className="document-card__actions">
           {canPreview && (
-            <button
-              type="button"
-              className="document-card__toggle"
+            <IconButton
+              icon={isExpanded ? "chevron-up" : "eye"}
+              label={isExpanded ? "Hide preview" : "Preview"}
               onClick={() => setIsExpanded((expanded) => !expanded)}
-              aria-expanded={isExpanded}
-            >
-              {isExpanded ? "Hide" : "Preview"}
-            </button>
+              tooltipSide="top"
+            />
           )}
-          <button
-            type="button"
-            className="document-card__toggle"
+          <IconButton
+            icon={saveState === "saved" ? "check" : "download"}
+            label={
+              saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Save a copy"
+            }
             onClick={save}
             disabled={saveState === "saving"}
-          >
-            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Save"}
-          </button>
+            tooltipSide="top"
+            tooltipAlign="end"
+          />
         </span>
       </div>
 
       {canPreview && isExpanded && Viewer && (
-        <div className="document-card__viewer">
+        <div className="document-card__viewer selectable">
           <Viewer document={document} />
         </div>
       )}
 
-      {saveError && <p className="document-card__unavailable">{saveError}</p>}
+      {saveError && (
+        <p className="document-card__note document-card__note--error" role="alert">
+          <Icon name="alert-circle" size={12} />
+          {saveError}
+        </p>
+      )}
 
       {!canPreview && (
-        <p className="document-card__unavailable">
+        <p className="document-card__note">
+          <Icon name="alert-circle" size={12} />
           {capability?.reason ?? "Preview not available for this file type."}
         </p>
       )}

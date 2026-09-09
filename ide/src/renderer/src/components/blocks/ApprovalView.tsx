@@ -2,13 +2,22 @@ import { useState } from "react";
 
 import type { ApprovalBlock } from "@shared/types.js";
 
+import { Icon } from "../ui/Icon.js";
+
+const RISK_TONE: Record<ApprovalBlock["riskLevel"], string> = {
+  HIGH: "badge--danger",
+  MEDIUM: "badge--warning",
+  LOW: "badge--neutral",
+};
+
 /**
  * A high-risk tool waiting on a human decision.
  *
  * The backend suspends the run until someone answers, so this shows the exact
  * arguments the tool would run with. Approving code you have not read is the
  * failure mode this whole gate exists to prevent, so the payload is displayed
- * rather than summarised.
+ * rather than summarised — and the block is styled as a stop, not as another
+ * status line to scroll past.
  */
 export function ApprovalView({ block }: { block: ApprovalBlock }): React.JSX.Element {
   const [submitting, setSubmitting] = useState(false);
@@ -28,32 +37,53 @@ export function ApprovalView({ block }: { block: ApprovalBlock }): React.JSX.Ele
   return (
     <div className="approval" role="group" aria-label="Tool approval required">
       <div className="approval__head">
-        <span className={`approval__risk approval__risk--${block.riskLevel.toLowerCase()}`}>
-          {block.riskLevel} risk
+        <span className="approval__icon">
+          <Icon name="alert-triangle" size={15} />
         </span>
-        <span className="approval__tool">{block.toolName}</span>
+        <span className="approval__title">Approval required</span>
+        <span className={`badge ${RISK_TONE[block.riskLevel]}`}>{block.riskLevel} risk</span>
       </div>
 
       <p className="approval__prompt">
-        The agent wants to run this. Review it before approving — it executes on your cluster.
+        The agent wants to run <span className="approval__tool">{block.toolName}</span>. Review the
+        arguments below before approving — this executes on your cluster.
       </p>
 
-      <pre className="approval__payload">{formatInput(block.input)}</pre>
+      <pre className="approval__payload selectable">{formatInput(block.input)}</pre>
 
-      {error && <p className="approval__error">{error}</p>}
+      {error && (
+        <p className="approval__error" role="alert">
+          {error}
+        </p>
+      )}
 
       {decided ? (
-        <p className="approval__decided">
+        <p
+          className={`approval__decided ${decided === "APPROVED" ? "approval__decided--approved" : ""}`}
+        >
+          <Icon name={decided === "APPROVED" ? "check-circle" : "ban"} size={14} />
           {decided === "APPROVED" ? "Approved — the run is continuing." : "Rejected."}
         </p>
       ) : (
         <div className="approval__actions">
-          <button type="button" className="approval__approve" onClick={() => decide("APPROVED")} disabled={submitting}>
-            Approve
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() => decide("APPROVED")}
+            disabled={submitting}
+          >
+            <Icon name="check" size={14} strokeWidth={2.2} />
+            Approve and run
           </button>
-          <button type="button" className="approval__reject" onClick={() => decide("REJECTED")} disabled={submitting}>
+          <button
+            type="button"
+            className="btn btn--danger"
+            onClick={() => decide("REJECTED")}
+            disabled={submitting}
+          >
             Reject
           </button>
+          {submitting && <span className="spinner" aria-hidden="true" />}
         </div>
       )}
     </div>

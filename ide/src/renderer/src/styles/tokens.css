@@ -1,0 +1,431 @@
+/*
+ * Design tokens.
+ *
+ * Two rules keep this file honest:
+ *
+ *  1. Nothing outside this file names a raw colour. Components consume
+ *     semantic tokens (`--bg-raised`, `--fg-secondary`, `--danger`) so a theme
+ *     is a palette swap rather than a sweep through every stylesheet.
+ *  2. Every scale is a closed set. Sizes, radii, and durations come from the
+ *     ramps below; a one-off `11.5px` or `13px` radius is what made the
+ *     previous UI read as assembled rather than designed.
+ *
+ * Themes are selected by `data-theme` on <html>, written by ThemeProvider
+ * before React paints. `system` follows the OS via the media query at the
+ * bottom, which is why it is a real value rather than a resolved one.
+ *
+ * ── On the palette ────────────────────────────────────────────────────────
+ * Near-greyscale base, one accent, used sparingly. The neutrals are warm —
+ * their hue sits around 35°, so they lean parchment rather than the blue-grey
+ * every dashboard defaults to — and the accent is copper. Two consequences
+ * worth knowing before editing:
+ *
+ *  - Copper is dark enough that white text on it fails contrast at body
+ *    sizes, so `--fg-on-accent` is near-black ink, not white, in dark mode.
+ *  - Copper sits next to amber in hue, so `--warning` is pushed towards
+ *    yellow and every warning surface is paired with an icon. Colour alone is
+ *    never the only signal.
+ */
+
+:root {
+  /* ── Typography ──────────────────────────────────────────────────────────
+   * No webfonts: the renderer's CSP has no remote origins (air-gapped
+   * install), so the stack resolves to whatever the OS actually ships. The
+   * tracking and feature settings below are what make a system stack look
+   * deliberate instead of default.
+   */
+  --font-ui:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable Text",
+    "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo,
+    Consolas, "Liberation Mono", monospace;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 19px;
+  --text-2xl: 23px;
+  --text-3xl: 28px;
+
+  --leading-tight: 1.25;
+  --leading-snug: 1.4;
+  --leading-normal: 1.55;
+  --leading-relaxed: 1.68;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 680;
+
+  /* Optical correction: larger text needs negative tracking to avoid looking
+     loose, small caps-y labels need positive tracking to stay legible. */
+  --tracking-display: -0.022em;
+  --tracking-tight: -0.011em;
+  --tracking-normal: 0;
+  --tracking-caps: 0.07em;
+
+  /* ── Space ───────────────────────────────────────────────────────────────
+   * A 2px-based ramp. Named by step, not by pixel, so a rhythm change is one
+   * edit here.
+   */
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-9: 20px;
+  --space-10: 24px;
+  --space-11: 32px;
+  --space-12: 40px;
+  --space-13: 56px;
+  --space-14: 72px;
+
+  /* ── Radius ──────────────────────────────────────────────────────────────
+   * Nested corners need the inner radius to be smaller than the outer one or
+   * the concentricity reads wrong, hence the tight lower end.
+   */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 24px;
+  --radius-full: 999px;
+
+  /* ── Motion ──────────────────────────────────────────────────────────────
+   * One easing curve for everything that enters or settles. Mixing curves is
+   * what makes an interface feel like several interfaces.
+   */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-instant: 80ms;
+  --duration-fast: 130ms;
+  --duration-normal: 200ms;
+  --duration-slow: 320ms;
+
+  /* ── Layout ──────────────────────────────────────────────────────────── */
+  --titlebar-height: 40px;
+  --statusbar-height: 26px;
+  --sidebar-width: 264px;
+  --panel-width: 44%;
+  --panel-min-width: 380px;
+  /* Measure. Prose stops being comfortable to read past ~80 characters. */
+  --thread-measure: 740px;
+  --control-height-sm: 24px;
+  --control-height: 30px;
+  --control-height-lg: 36px;
+
+  /* ── Z-index ─────────────────────────────────────────────────────────────
+   * Declared as a ladder so nothing has to guess whether 100 is above 99.
+   */
+  --z-sticky: 10;
+  --z-panel: 20;
+  --z-titlebar: 30;
+  --z-scrim: 40;
+  --z-overlay: 50;
+  --z-toast: 60;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Dark theme — the default, and what an operations room actually runs.
+ *
+ * Warm graphite: the neutral ramp carries a low-saturation warm cast, which
+ * is what stops a near-black UI from looking like blue plastic. Copper is the
+ * only hue that appears outside of status.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+:root,
+:root[data-theme="dark"],
+:root[data-theme="system"] {
+  color-scheme: dark;
+
+  /* Surfaces, from the window backdrop upwards. */
+  --bg-canvas: #0b0a09;
+  --bg-app: #100e0c;
+  --bg-surface: #14120f;
+  --bg-raised: #1b1815;
+  --bg-raised-hover: #23201c;
+  --bg-overlay: #1e1b17;
+  --bg-inset: #0d0c0a;
+  --bg-hover: rgba(255, 246, 232, 0.05);
+  --bg-active: rgba(255, 246, 232, 0.08);
+  --bg-selected: rgba(200, 127, 60, 0.13);
+  --bg-scrim: rgba(6, 5, 4, 0.64);
+  /* Documents render on real paper; the mat behind them must not be paper. */
+  --bg-paper-mat: #070605;
+
+  /* Text, in descending emphasis. `quaternary` is the disabled tier. */
+  --fg-primary: #edeae4;
+  --fg-secondary: #a8a29a;
+  --fg-tertiary: #7a736a;
+  --fg-quaternary: #56504a;
+  /* Near-black, not white: see the palette note at the top of this file. */
+  --fg-on-accent: #1c1409;
+  --fg-on-solid: #0b0a09;
+
+  /* Hairlines. `subtle` divides, `default` encloses, `strong` emphasises. */
+  --border-subtle: rgba(255, 245, 230, 0.06);
+  --border-default: rgba(255, 245, 230, 0.11);
+  --border-strong: rgba(255, 245, 230, 0.18);
+  --border-focus: #d9954f;
+
+  --accent: #c87f3c;
+  --accent-hover: #d78f4b;
+  --accent-active: #ac6a2e;
+  --accent-soft: rgba(200, 127, 60, 0.15);
+  --accent-softer: rgba(200, 127, 60, 0.07);
+  --accent-border: rgba(200, 127, 60, 0.42);
+  /* The accent as *text*, lightened until it holds contrast on the surfaces
+     above. The fill colour would fail at body sizes. */
+  --accent-fg: #e2a56f;
+  --accent-ring: rgba(200, 127, 60, 0.34);
+
+  --success: #4e9a5f;
+  --success-fg: #82c68e;
+  --success-soft: rgba(78, 154, 95, 0.15);
+  --success-border: rgba(78, 154, 95, 0.34);
+
+  /* Pushed towards yellow to separate it from copper. */
+  --warning: #c9a227;
+  --warning-fg: #e2c45c;
+  --warning-soft: rgba(201, 162, 39, 0.15);
+  --warning-border: rgba(201, 162, 39, 0.34);
+
+  --danger: #c4554d;
+  --danger-fg: #ea948c;
+  --danger-soft: rgba(196, 85, 77, 0.15);
+  --danger-border: rgba(196, 85, 77, 0.36);
+
+  /*
+   * `info` is deliberately hueless. With one accent in the system, a second
+   * "informational" colour would read as a competing brand tone, so notices
+   * are neutral and lean on their icon instead.
+   */
+  --info: #8a8279;
+  --info-fg: #b8afa4;
+  --info-soft: rgba(237, 234, 228, 0.055);
+  --info-border: rgba(237, 234, 228, 0.13);
+
+  /* Diff surfaces. The gutter tint is stronger than the row tint so the
+     change bar stays visible when rows are dense. */
+  --diff-add-bg: rgba(78, 154, 95, 0.13);
+  --diff-add-gutter: rgba(78, 154, 95, 0.24);
+  --diff-add-fg: #95d5a2;
+  --diff-del-bg: rgba(196, 85, 77, 0.12);
+  --diff-del-gutter: rgba(196, 85, 77, 0.22);
+  --diff-del-fg: #efa39a;
+
+  /* Run-graph states. `running` takes the accent — it is the one node the eye
+     should land on while a turn is in flight. */
+  --graph-idle: #6e6760;
+  --graph-running: #c87f3c;
+  --graph-complete: #4e9a5f;
+  --graph-failed: #c4554d;
+  --graph-waiting: #c9a227;
+  --graph-edge: rgba(255, 245, 230, 0.14);
+  --graph-edge-active: rgba(200, 127, 60, 0.7);
+  --graph-dots: rgba(255, 245, 230, 0.06);
+
+  /* Elevation. Dark themes read depth from a light top edge as much as from
+     the shadow, hence the inset highlight in the larger steps. */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.44);
+  --shadow-md:
+    0 4px 14px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 246, 232, 0.035);
+  --shadow-lg:
+    0 12px 32px rgba(0, 0, 0, 0.58), inset 0 1px 0 rgba(255, 246, 232, 0.045);
+  --shadow-xl:
+    0 24px 64px rgba(0, 0, 0, 0.68), inset 0 1px 0 rgba(255, 246, 232, 0.055);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Light theme.
+ *
+ * Not an inversion. The accent has to darken substantially to hold contrast
+ * on white — copper at its dark-theme value is unreadable as text on paper —
+ * and elevation comes from shadow alone, since there is no dark ground for a
+ * highlight to read against.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-canvas: #f0ede8;
+  --bg-app: #ffffff;
+  --bg-surface: #faf9f7;
+  --bg-raised: #ffffff;
+  --bg-raised-hover: #f4f1ec;
+  --bg-overlay: #ffffff;
+  --bg-inset: #f6f4f0;
+  --bg-hover: rgba(28, 20, 9, 0.045);
+  --bg-active: rgba(28, 20, 9, 0.075);
+  --bg-selected: rgba(164, 95, 34, 0.09);
+  --bg-scrim: rgba(38, 30, 20, 0.34);
+  --bg-paper-mat: #e6e1d8;
+
+  --fg-primary: #17140f;
+  --fg-secondary: #56504a;
+  --fg-tertiary: #6b6459;
+  --fg-quaternary: #8b8478;
+  --fg-on-accent: #ffffff;
+  --fg-on-solid: #ffffff;
+
+  --border-subtle: rgba(28, 20, 9, 0.07);
+  --border-default: rgba(28, 20, 9, 0.13);
+  --border-strong: rgba(28, 20, 9, 0.23);
+  --border-focus: #a45f22;
+
+  --accent: #a45f22;
+  --accent-hover: #b76c29;
+  --accent-active: #8b4e19;
+  --accent-soft: rgba(164, 95, 34, 0.1);
+  --accent-softer: rgba(164, 95, 34, 0.05);
+  --accent-border: rgba(164, 95, 34, 0.32);
+  --accent-fg: #8f4e17;
+  --accent-ring: rgba(164, 95, 34, 0.28);
+
+  --success: #2f7d43;
+  --success-fg: #256434;
+  --success-soft: rgba(47, 125, 67, 0.1);
+  --success-border: rgba(47, 125, 67, 0.28);
+
+  --warning: #8a6410;
+  --warning-fg: #7a5709;
+  --warning-soft: rgba(138, 100, 16, 0.11);
+  --warning-border: rgba(138, 100, 16, 0.28);
+
+  --danger: #b23b33;
+  --danger-fg: #9c322b;
+  --danger-soft: rgba(178, 59, 51, 0.09);
+  --danger-border: rgba(178, 59, 51, 0.28);
+
+  --info: #6b645b;
+  --info-fg: #56504a;
+  --info-soft: rgba(28, 20, 9, 0.05);
+  --info-border: rgba(28, 20, 9, 0.14);
+
+  --diff-add-bg: rgba(47, 125, 67, 0.09);
+  --diff-add-gutter: rgba(47, 125, 67, 0.18);
+  --diff-add-fg: #1e5c2d;
+  --diff-del-bg: rgba(178, 59, 51, 0.075);
+  --diff-del-gutter: rgba(178, 59, 51, 0.16);
+  --diff-del-fg: #93291f;
+
+  --graph-idle: #9d968c;
+  --graph-running: #a45f22;
+  --graph-complete: #2f7d43;
+  --graph-failed: #b23b33;
+  --graph-waiting: #8a6410;
+  --graph-edge: rgba(28, 20, 9, 0.18);
+  --graph-edge-active: rgba(164, 95, 34, 0.65);
+  --graph-dots: rgba(28, 20, 9, 0.08);
+
+  --shadow-xs: 0 1px 2px rgba(28, 20, 9, 0.06);
+  --shadow-sm: 0 1px 3px rgba(28, 20, 9, 0.08), 0 1px 2px rgba(28, 20, 9, 0.05);
+  --shadow-md:
+    0 4px 12px rgba(28, 20, 9, 0.09), 0 1px 3px rgba(28, 20, 9, 0.06);
+  --shadow-lg:
+    0 12px 28px rgba(28, 20, 9, 0.12), 0 2px 6px rgba(28, 20, 9, 0.07);
+  --shadow-xl:
+    0 24px 56px rgba(28, 20, 9, 0.16), 0 4px 10px rgba(28, 20, 9, 0.08);
+}
+
+/*
+ * `system` resolves at the OS level. Declared as an override of the dark
+ * block above rather than as a third palette, so the light values live in
+ * exactly one place.
+ */
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    color-scheme: light;
+
+    --bg-canvas: #f0ede8;
+    --bg-app: #ffffff;
+    --bg-surface: #faf9f7;
+    --bg-raised: #ffffff;
+    --bg-raised-hover: #f4f1ec;
+    --bg-overlay: #ffffff;
+    --bg-inset: #f6f4f0;
+    --bg-hover: rgba(28, 20, 9, 0.045);
+    --bg-active: rgba(28, 20, 9, 0.075);
+    --bg-selected: rgba(164, 95, 34, 0.09);
+    --bg-scrim: rgba(38, 30, 20, 0.34);
+    --bg-paper-mat: #e6e1d8;
+
+    --fg-primary: #17140f;
+    --fg-secondary: #56504a;
+    --fg-tertiary: #6b6459;
+    --fg-quaternary: #8b8478;
+    --fg-on-accent: #ffffff;
+    --fg-on-solid: #ffffff;
+
+    --border-subtle: rgba(28, 20, 9, 0.07);
+    --border-default: rgba(28, 20, 9, 0.13);
+    --border-strong: rgba(28, 20, 9, 0.23);
+    --border-focus: #a45f22;
+
+    --accent: #a45f22;
+    --accent-hover: #b76c29;
+    --accent-active: #8b4e19;
+    --accent-soft: rgba(164, 95, 34, 0.1);
+    --accent-softer: rgba(164, 95, 34, 0.05);
+    --accent-border: rgba(164, 95, 34, 0.32);
+    --accent-fg: #8f4e17;
+    --accent-ring: rgba(164, 95, 34, 0.28);
+
+    --success: #2f7d43;
+    --success-fg: #256434;
+    --success-soft: rgba(47, 125, 67, 0.1);
+    --success-border: rgba(47, 125, 67, 0.28);
+
+    --warning: #8a6410;
+    --warning-fg: #7a5709;
+    --warning-soft: rgba(138, 100, 16, 0.11);
+    --warning-border: rgba(138, 100, 16, 0.28);
+
+    --danger: #b23b33;
+    --danger-fg: #9c322b;
+    --danger-soft: rgba(178, 59, 51, 0.09);
+    --danger-border: rgba(178, 59, 51, 0.28);
+
+    --info: #6b645b;
+    --info-fg: #56504a;
+    --info-soft: rgba(28, 20, 9, 0.05);
+    --info-border: rgba(28, 20, 9, 0.14);
+
+    --diff-add-bg: rgba(47, 125, 67, 0.09);
+    --diff-add-gutter: rgba(47, 125, 67, 0.18);
+    --diff-add-fg: #1e5c2d;
+    --diff-del-bg: rgba(178, 59, 51, 0.075);
+    --diff-del-gutter: rgba(178, 59, 51, 0.16);
+    --diff-del-fg: #93291f;
+
+    --graph-idle: #9d968c;
+    --graph-running: #a45f22;
+    --graph-complete: #2f7d43;
+    --graph-failed: #b23b33;
+    --graph-waiting: #8a6410;
+    --graph-edge: rgba(28, 20, 9, 0.18);
+    --graph-edge-active: rgba(164, 95, 34, 0.65);
+    --graph-dots: rgba(28, 20, 9, 0.08);
+
+    --shadow-xs: 0 1px 2px rgba(28, 20, 9, 0.06);
+    --shadow-sm:
+      0 1px 3px rgba(28, 20, 9, 0.08), 0 1px 2px rgba(28, 20, 9, 0.05);
+    --shadow-md:
+      0 4px 12px rgba(28, 20, 9, 0.09), 0 1px 3px rgba(28, 20, 9, 0.06);
+    --shadow-lg:
+      0 12px 28px rgba(28, 20, 9, 0.12), 0 2px 6px rgba(28, 20, 9, 0.07);
+    --shadow-xl:
+      0 24px 56px rgba(28, 20, 9, 0.16), 0 4px 10px rgba(28, 20, 9, 0.08);
+  }
+}

@@ -2,6 +2,7 @@ import { app, BrowserWindow } from "electron";
 
 import { EventBroadcaster } from "./events.js";
 import { registerIpcHandlers } from "./ipc/index.js";
+import { installApplicationMenu } from "./menu.js";
 import { applySecurityPolicy } from "./security.js";
 import { BrowserPane } from "./services/browser-pane.js";
 import { ChatService } from "./services/chat-service.js";
@@ -39,6 +40,7 @@ app.whenReady().then(main).catch((error: unknown) => {
 
 async function main(): Promise<void> {
   applySecurityPolicy();
+  installApplicationMenu();
 
   store = await ChatStore.open(app.getPath("userData"));
   chats = new ChatService(store, new BackendAgentGateway({ session, documents }), events);

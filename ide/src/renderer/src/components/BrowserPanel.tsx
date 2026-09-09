@@ -1,8 +1,23 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import type { BrowserPaneController } from "../hooks/useBrowserPane.js";
+import { Icon } from "./ui/Icon.js";
+import { IconButton } from "./ui/IconButton.js";
+import { PanelTabs, type PanelTab } from "./ui/PanelTabs.js";
 
-export function BrowserPanel({ pane }: { pane: BrowserPaneController }): React.JSX.Element {
+export interface BrowserPanelProps {
+  pane: BrowserPaneController;
+  onSelectTab: (tab: PanelTab) => void;
+  traceEnabled: boolean;
+  onClose: () => void;
+}
+
+export function BrowserPanel({
+  pane,
+  onSelectTab,
+  traceEnabled,
+  onClose,
+}: BrowserPanelProps): React.JSX.Element {
   const [addressValue, setAddressValue] = useState(pane.state.url ?? "");
 
   // Follow real navigations, but leave whatever the user is mid-way through
@@ -18,29 +33,43 @@ export function BrowserPanel({ pane }: { pane: BrowserPaneController }): React.J
   }
 
   return (
-    <aside className="browser" aria-label="Embedded browser">
-      <div className="browser__toolbar">
-        <button
-          type="button"
-          className="browser__nav"
-          onClick={pane.goBack}
+    <aside className="panel" aria-label="Embedded browser">
+      <header className="panel__head">
+        <PanelTabs active="browser" onSelect={onSelectTab} traceEnabled={traceEnabled} />
+        <div className="panel__actions">
+          <IconButton
+            icon="external"
+            label="Open in the system browser"
+            size="sm"
+            disabled={!pane.state.url}
+            onClick={() => pane.state.url && pane.openExternal(pane.state.url)}
+          />
+          <IconButton
+            icon="close"
+            label="Close panel"
+            size="sm"
+            onClick={onClose}
+            tooltipAlign="end"
+          />
+        </div>
+      </header>
+
+      <div className="panel__toolbar">
+        <IconButton
+          icon="arrow-left"
+          label="Back"
+          size="sm"
           disabled={!pane.state.canGoBack}
-          aria-label="Back"
-        >
-          ‹
-        </button>
-        <button
-          type="button"
-          className="browser__nav"
-          onClick={pane.goForward}
+          onClick={pane.goBack}
+        />
+        <IconButton
+          icon="arrow-right"
+          label="Forward"
+          size="sm"
           disabled={!pane.state.canGoForward}
-          aria-label="Forward"
-        >
-          ›
-        </button>
-        <button type="button" className="browser__nav" onClick={pane.reload} aria-label="Reload">
-          ⟳
-        </button>
+          onClick={pane.goForward}
+        />
+        <IconButton icon="refresh" label="Reload" size="sm" onClick={pane.reload} />
 
         <form className="browser__address" onSubmit={handleNavigate}>
           <input
@@ -52,25 +81,16 @@ export function BrowserPanel({ pane }: { pane: BrowserPaneController }): React.J
             spellCheck={false}
           />
         </form>
-
-        <button
-          type="button"
-          className="browser__nav"
-          onClick={() => pane.state.url && pane.openExternal(pane.state.url)}
-          disabled={!pane.state.url}
-          title="Open in system browser"
-          aria-label="Open in system browser"
-        >
-          ↗
-        </button>
-        <button type="button" className="browser__nav" onClick={pane.close} aria-label="Close browser">
-          ×
-        </button>
       </div>
 
       {pane.state.isLoading && <div className="browser__progress" role="presentation" />}
 
-      {pane.state.error && <p className="browser__error">{pane.state.error}</p>}
+      {pane.state.error && (
+        <p className="panel__notice" role="alert">
+          <Icon name="alert-circle" size={13} />
+          {pane.state.error}
+        </p>
+      )}
 
       {/*
         The native WebContentsView is painted over this element by the main

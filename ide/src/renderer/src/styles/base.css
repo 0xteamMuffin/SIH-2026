@@ -1,0 +1,948 @@
+/*
+ * Reset, document defaults, and the primitives every feature reuses:
+ * buttons, fields, chips, tooltips, spinners, keyboard hints.
+ *
+ * Anything here is deliberately generic. A component stylesheet that needs a
+ * button should compose `.btn` rather than restyle one from scratch — that is
+ * the difference between a design system and a pile of CSS.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-weight: var(--weight-normal);
+  line-height: var(--leading-normal);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg-primary);
+  background: var(--bg-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Contextual alternates and kerning; cheap polish on a system stack. */
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+  /* A desktop shell should not rubber-band like a web page. */
+  overflow: hidden;
+  /* Chrome text selection defaults are too pale over dark surfaces. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  color: var(--fg-primary);
+  background: var(--accent-soft);
+}
+
+/*
+ * The chrome is an application, not a document: dragging out a selection of
+ * the sidebar or the toolbar is never what someone meant. Content areas opt
+ * back in via `.selectable`.
+ */
+body {
+  user-select: none;
+  cursor: default;
+}
+
+.selectable,
+.selectable * {
+  user-select: text;
+  cursor: auto;
+}
+
+input,
+textarea {
+  user-select: text;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-mono);
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0;
+}
+
+button {
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--accent-fg);
+  text-decoration-color: color-mix(in srgb, var(--accent-fg) 45%, transparent);
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* ── Focus ─────────────────────────────────────────────────────────────────
+ * One ring for the whole app, keyboard-only. An enterprise tool is audited
+ * for this; a visible, consistent focus state is not decoration.
+ */
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+  border-radius: var(--radius-xs);
+}
+
+/* Fields already have a border to thicken, so they take a ring instead of an
+   outline that would sit awkwardly outside their radius. */
+.field:focus-visible,
+.field:focus-within {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+/* ── Scrollbars ────────────────────────────────────────────────────────────
+ * Overlay-style: no track, thumb only, and only visible once the region is
+ * hovered. Permanent scrollbars are the loudest thing in a dense UI.
+ */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: var(--radius-full);
+}
+
+:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg-tertiary) 45%, transparent);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg-tertiary) 75%, transparent);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ── Text helpers ────────────────────────────────────────────────────────── */
+
+.muted {
+  color: var(--fg-tertiary);
+}
+
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Section headers throughout the chrome. */
+.eyebrow {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-caps);
+  color: var(--fg-tertiary);
+  text-transform: uppercase;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Only for screen readers — used for live-region announcements. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────────────
+ * `.btn` is the shape; a variant supplies the colour. Every variant keeps the
+ * same height and radius so a row of mixed buttons still aligns.
+ */
+
+.btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  height: var(--control-height);
+  padding: 0 var(--space-6);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.btn--sm {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-4);
+  font-size: var(--text-xs);
+  border-radius: var(--radius-sm);
+}
+
+.btn--lg {
+  height: var(--control-height-lg);
+  padding: 0 var(--space-8);
+  font-size: var(--text-base);
+}
+
+.btn--block {
+  width: 100%;
+}
+
+.btn--primary {
+  color: var(--fg-on-accent);
+  background: var(--accent);
+  box-shadow: var(--shadow-xs);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn--primary:active:not(:disabled) {
+  background: var(--accent-active);
+}
+
+.btn--secondary {
+  color: var(--fg-primary);
+  background: var(--bg-raised);
+  border-color: var(--border-default);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background: var(--bg-raised-hover);
+  border-color: var(--border-strong);
+}
+
+.btn--ghost {
+  color: var(--fg-secondary);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  color: var(--fg-primary);
+  background: var(--bg-hover);
+}
+
+.btn--danger {
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
+}
+
+.btn--danger:hover:not(:disabled) {
+  color: var(--fg-on-accent);
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn:disabled {
+  color: var(--fg-quaternary);
+  background: var(--bg-hover);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.btn--ghost:disabled {
+  background: none;
+}
+
+/* ── Icon buttons ─────────────────────────────────────────────────────────── */
+
+.icon-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height);
+  height: var(--control-height);
+  color: var(--fg-tertiary);
+  border-radius: var(--radius-md);
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+.icon-btn:hover:not(:disabled) {
+  color: var(--fg-primary);
+  background: var(--bg-hover);
+}
+
+.icon-btn:active:not(:disabled) {
+  background: var(--bg-active);
+}
+
+.icon-btn:disabled {
+  color: var(--fg-quaternary);
+}
+
+.icon-btn--sm {
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  border-radius: var(--radius-sm);
+}
+
+.icon-btn--active {
+  color: var(--accent-fg);
+  background: var(--accent-soft);
+}
+
+.icon-btn--active:hover:not(:disabled) {
+  color: var(--accent-fg);
+  background: var(--accent-soft);
+}
+
+.icon-btn--danger:hover:not(:disabled) {
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+}
+
+/* ── Fields ───────────────────────────────────────────────────────────────── */
+
+.field {
+  width: 100%;
+  height: var(--control-height);
+  padding: 0 var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--fg-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.field::placeholder {
+  color: var(--fg-quaternary);
+}
+
+.field:hover:not(:focus) {
+  border-color: var(--border-strong);
+}
+
+/* A field with a leading icon. */
+.field-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.field-group__icon {
+  position: absolute;
+  left: var(--space-4);
+  display: flex;
+  color: var(--fg-quaternary);
+  pointer-events: none;
+}
+
+.field-group__clear {
+  position: absolute;
+  right: var(--space-2);
+}
+
+.field-group .field {
+  padding-left: var(--space-11);
+}
+
+.field-group--clearable .field {
+  padding-right: var(--space-11);
+}
+
+/*
+ * Native selects cannot be styled consistently across platforms, so the
+ * chrome is drawn by the wrapper and the select itself is made transparent
+ * on top of it. The arrow is a real element rather than `appearance`, which
+ * Chromium renders differently per OS.
+ */
+.select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.select__control {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-9) 0 var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--fg-secondary);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+  appearance: none;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.select__control:hover {
+  color: var(--fg-primary);
+  border-color: var(--border-strong);
+}
+
+.select__control:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.select__chevron {
+  position: absolute;
+  right: var(--space-3);
+  color: var(--fg-tertiary);
+  pointer-events: none;
+}
+
+/* Option lists are drawn by the OS, so they need explicit colours to avoid
+   white-on-white in dark mode on Linux. */
+.select__control option {
+  color: var(--fg-primary);
+  background: var(--bg-overlay);
+}
+
+/* ── Chips and badges ────────────────────────────────────────────────────── */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--fg-secondary);
+  white-space: nowrap;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+}
+
+.chip--button:hover {
+  color: var(--fg-primary);
+  border-color: var(--border-strong);
+  background: var(--bg-raised-hover);
+}
+
+.chip--accent {
+  color: var(--accent-fg);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 1px var(--space-4);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  border-radius: var(--radius-xs);
+}
+
+.badge--neutral {
+  color: var(--fg-tertiary);
+  background: var(--bg-hover);
+}
+
+.badge--success {
+  color: var(--success-fg);
+  background: var(--success-soft);
+}
+
+.badge--warning {
+  color: var(--warning-fg);
+  background: var(--warning-soft);
+}
+
+.badge--danger {
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+}
+
+.badge--info {
+  color: var(--info-fg);
+  background: var(--info-soft);
+}
+
+.badge--accent {
+  color: var(--accent-fg);
+  background: var(--accent-soft);
+}
+
+/* ── Keyboard hints ──────────────────────────────────────────────────────── */
+
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  color: var(--fg-tertiary);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-xs);
+}
+
+.kbd-group {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+/* ── Indicators ──────────────────────────────────────────────────────────── */
+
+.spinner {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: var(--radius-full);
+  animation: spin 0.7s linear infinite;
+}
+
+.spinner--sm {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+
+.spinner--lg {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+}
+
+/* Three-dot "thinking" indicator, used while a turn has produced no text. */
+.typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.typing span {
+  width: 4px;
+  height: 4px;
+  background: var(--fg-tertiary);
+  border-radius: var(--radius-full);
+  animation: bounce 1.1s var(--ease-in-out) infinite;
+}
+
+.typing span:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.typing span:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes halo {
+  0%,
+  100% {
+    transform: scale(0.85);
+    opacity: 0.28;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+
+@keyframes bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    transform: scale(0.97) translateY(-4px);
+    opacity: 0;
+  }
+}
+
+/* ── Tooltips ─────────────────────────────────────────────────────────────
+ * CSS-only, on a wrapper carrying `data-tooltip`. Native `title` has a
+ * ~1s delay and OS-native styling that looks foreign inside a custom shell.
+ */
+
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  z-index: var(--z-toast);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--fg-primary);
+  white-space: nowrap;
+  pointer-events: none;
+  content: attr(data-tooltip);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  transform: translate(-50%, -2px);
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+  transition-delay: 0s;
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition-delay: 400ms;
+}
+
+[data-tooltip-align="end"]::after {
+  left: auto;
+  right: 0;
+  transform: translate(0, -2px);
+}
+
+[data-tooltip-align="end"]:hover::after,
+[data-tooltip-align="end"]:focus-visible::after {
+  transform: translate(0, 0);
+}
+
+[data-tooltip-side="top"]::after {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+/* ── Segmented control ───────────────────────────────────────────────────── */
+
+.segmented {
+  display: inline-flex;
+  gap: 1px;
+  padding: 2px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.segmented__option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: 22px;
+  padding: 0 var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--fg-tertiary);
+  border-radius: var(--radius-sm);
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+.segmented__option:hover {
+  color: var(--fg-secondary);
+}
+
+.segmented__option--active {
+  color: var(--fg-primary);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-xs);
+}
+
+.segmented__option--active:hover {
+  color: var(--fg-primary);
+}
+
+/* ── Dropdown menu ───────────────────────────────────────────────────────
+ * Owned rather than native, so the list matches the app in both themes and
+ * can carry a second line per row. See DropdownMenu.tsx.
+ */
+
+.menu {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+}
+
+.menu__panel {
+  position: absolute;
+  top: calc(100% + var(--space-3));
+  left: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 240px;
+  max-width: 340px;
+  max-height: 320px;
+  padding: var(--space-3);
+  overflow-y: auto;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  animation: scale-in var(--duration-fast) var(--ease-out);
+}
+
+.menu__panel--end {
+  left: auto;
+  right: 0;
+}
+
+.menu__header {
+  padding: var(--space-3) var(--space-4) var(--space-3);
+}
+
+.menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-4);
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+
+.menu__item:hover,
+.menu__item:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.menu__item--selected {
+  background: var(--bg-selected);
+}
+
+.menu__item-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.menu__item-label {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--fg-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu__item-description {
+  overflow: hidden;
+  font-size: var(--text-2xs);
+  color: var(--fg-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu__item-check {
+  flex-shrink: 0;
+  color: var(--accent-fg);
+}
+
+/* ── Avatars ─────────────────────────────────────────────────────────────── */
+
+.avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0;
+  text-transform: uppercase;
+  border-radius: var(--radius-sm);
+  /* Hue comes from the identity being rendered, so two accounts never look
+     the same at a glance. Set inline by the Avatar component. */
+  color: hsl(var(--avatar-hue, 220) 62% 72%);
+  background: hsl(var(--avatar-hue, 220) 52% 20%);
+  box-shadow: inset 0 0 0 1px hsl(var(--avatar-hue, 220) 52% 32%);
+}
+
+:root[data-theme="light"] .avatar {
+  color: hsl(var(--avatar-hue, 220) 58% 32%);
+  background: hsl(var(--avatar-hue, 220) 72% 94%);
+  box-shadow: inset 0 0 0 1px hsl(var(--avatar-hue, 220) 52% 82%);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] .avatar {
+    color: hsl(var(--avatar-hue, 220) 58% 32%);
+    background: hsl(var(--avatar-hue, 220) 72% 94%);
+    box-shadow: inset 0 0 0 1px hsl(var(--avatar-hue, 220) 52% 82%);
+  }
+}
+
+.avatar--sm {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-xs);
+}
+
+.avatar--lg {
+  width: 30px;
+  height: 30px;
+  font-size: var(--text-xs);
+  border-radius: var(--radius-md);
+}
+
+/* The agent's mark. Fixed identity, so it uses the accent rather than a hue
+   derived from a string. */
+.avatar--agent {
+  color: var(--fg-on-accent);
+  background: linear-gradient(
+    155deg,
+    var(--accent-hover),
+    var(--accent-active)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    var(--shadow-xs);
+}
+
+/* ── Dividers ────────────────────────────────────────────────────────────── */
+
+.divider {
+  flex-shrink: 0;
+  width: 1px;
+  height: 16px;
+  background: var(--border-default);
+}
+
+.divider--h {
+  width: auto;
+  height: 1px;
+}
+
+/* ── Empty and loading states ────────────────────────────────────────────── */
+
+.center-state {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-height: 0;
+  font-size: var(--text-sm);
+  color: var(--fg-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

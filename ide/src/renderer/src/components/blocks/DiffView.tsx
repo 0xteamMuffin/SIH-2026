@@ -2,6 +2,8 @@ import { useState } from "react";
 
 import type { DiffHunk, DiffLine, FilePatch } from "@shared/types.js";
 
+import { Icon } from "../ui/Icon.js";
+
 const CHANGE_LABELS: Record<FilePatch["changeType"], string> = {
   added: "added",
   modified: "modified",
@@ -9,8 +11,16 @@ const CHANGE_LABELS: Record<FilePatch["changeType"], string> = {
   renamed: "renamed",
 };
 
+/** Change type carries the same colour language as the rows below it. */
+const CHANGE_TONE: Record<FilePatch["changeType"], string> = {
+  added: "badge--success",
+  modified: "badge--neutral",
+  deleted: "badge--danger",
+  renamed: "badge--info",
+};
+
 /**
- * A unified diff for one file, in the red/green style of a GitHub pull request.
+ * A unified diff for one file, in the red/green style of a pull request.
  *
  * Renders straight from a `FilePatch` and computes nothing: line numbers,
  * additions, and deletions are all resolved upstream, so this stays a pure
@@ -20,34 +30,38 @@ export function DiffView({ patch }: { patch: FilePatch }): React.JSX.Element {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   return (
-    <figure className="diff">
+    <figure className={`diff ${isCollapsed ? "diff--collapsed" : ""}`}>
       <button
         type="button"
         className="diff__header"
         onClick={() => setIsCollapsed((collapsed) => !collapsed)}
         aria-expanded={!isCollapsed}
       >
-        <span className={`diff__chevron ${isCollapsed ? "diff__chevron--collapsed" : ""}`} aria-hidden="true">
-          ▾
-        </span>
+        <Icon
+          name="chevron-down"
+          size={13}
+          className={`diff__chevron ${isCollapsed ? "diff__chevron--collapsed" : ""}`}
+        />
 
         <span className="diff__path">
-          {patch.previousPath && <span className="diff__previous-path">{patch.previousPath} → </span>}
+          {patch.previousPath && (
+            <span className="diff__previous-path">{patch.previousPath} → </span>
+          )}
           {patch.path}
         </span>
 
-        <span className={`diff__badge diff__badge--${patch.changeType}`}>
+        <span className={`badge ${CHANGE_TONE[patch.changeType]}`}>
           {CHANGE_LABELS[patch.changeType]}
         </span>
 
         <span className="diff__stats">
-          {patch.additions > 0 && <span className="diff__stat diff__stat--add">+{patch.additions}</span>}
-          {patch.deletions > 0 && <span className="diff__stat diff__stat--del">−{patch.deletions}</span>}
+          {patch.additions > 0 && <span className="diff__stat--add">+{patch.additions}</span>}
+          {patch.deletions > 0 && <span className="diff__stat--del">−{patch.deletions}</span>}
         </span>
       </button>
 
       {!isCollapsed && (
-        <div className="diff__body">
+        <div className="diff__body selectable">
           {patch.binary ? (
             <p className="diff__empty">Binary file — no textual diff.</p>
           ) : patch.hunks.length === 0 ? (

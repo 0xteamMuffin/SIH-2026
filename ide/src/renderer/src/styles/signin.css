@@ -1,0 +1,268 @@
+/*
+ * Sign-in.
+ *
+ * Two columns: what the product is on the left, the connection form on the
+ * right. The workbench has no offline mode — every answer comes from the
+ * on-prem backend — so this screen is the whole application until a
+ * connection exists, and it is worth the space.
+ */
+
+.signin {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-app);
+}
+
+/* ── Brand column ─────────────────────────────────────────────────────────
+ * The backdrop is a hairline engineering grid under a single soft light,
+ * rather than a colour wash. It signals infrastructure, and — more usefully —
+ * it does not compete with the form for attention.
+ */
+
+.signin__aside {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--space-13) var(--space-12);
+  overflow: hidden;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+}
+
+.signin__aside::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background-image:
+    linear-gradient(var(--border-subtle) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 80% 60% at 30% 20%, #000, transparent 75%);
+}
+
+.signin__aside::after {
+  position: absolute;
+  top: -30%;
+  left: -10%;
+  width: 70%;
+  height: 70%;
+  content: "";
+  background: radial-gradient(circle, var(--accent-softer), transparent 70%);
+  pointer-events: none;
+}
+
+.signin__aside > * {
+  position: relative;
+}
+
+.signin__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.signin__brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: var(--fg-on-accent);
+  background: linear-gradient(155deg, var(--accent-hover), var(--accent-active));
+  border-radius: var(--radius-lg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    var(--shadow-md);
+}
+
+.signin__brand-name {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+}
+
+.signin__pitch {
+  max-width: 420px;
+}
+
+.signin__headline {
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-display);
+  color: var(--fg-primary);
+}
+
+.signin__lede {
+  margin-top: var(--space-6);
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  color: var(--fg-tertiary);
+}
+
+.signin__points {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  margin-top: var(--space-11);
+  list-style: none;
+}
+
+.signin__point {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--fg-secondary);
+}
+
+.signin__point-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--accent-fg);
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+}
+
+.signin__point-title {
+  font-weight: var(--weight-medium);
+  color: var(--fg-primary);
+}
+
+.signin__point-body {
+  color: var(--fg-tertiary);
+}
+
+.signin__footnote {
+  font-size: var(--text-xs);
+  color: var(--fg-quaternary);
+}
+
+/* ── Form column ─────────────────────────────────────────────────────────── */
+
+.signin__panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-12);
+  overflow-y: auto;
+  background: var(--bg-app);
+}
+
+.signin__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  width: 100%;
+  max-width: 340px;
+}
+
+.signin__title {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-display);
+}
+
+.signin__subtitle {
+  margin-top: calc(-1 * var(--space-4));
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--fg-tertiary);
+}
+
+.signin__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.signin__label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--fg-secondary);
+}
+
+.signin__field .field {
+  height: var(--control-height-lg);
+  font-size: var(--text-base);
+  background: var(--bg-inset);
+}
+
+.signin__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-md);
+}
+
+.signin__submit {
+  margin-top: var(--space-3);
+}
+
+.signin__note {
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--fg-quaternary);
+  text-align: center;
+}
+
+.signin__note--dev {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  color: var(--fg-secondary);
+  text-align: left;
+  background: var(--info-soft);
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius-md);
+}
+
+.signin__note--dev code {
+  font-size: var(--text-xs);
+  color: var(--info-fg);
+}
+
+/* ── Boot state ──────────────────────────────────────────────────────────
+ * Shown for the moment between the window appearing and the main process
+ * reporting whether a session exists.
+ */
+
+.boot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  height: 100%;
+  font-size: var(--text-sm);
+  color: var(--fg-tertiary);
+  background: var(--bg-app);
+}
+
+/*
+ * Narrow windows drop to the form alone — two columns of this content each
+ * become too narrow to read.
+ *
+ * This has to come last in the file. `.signin__aside` sets `display: flex`
+ * above, and at equal specificity the later rule wins regardless of the media
+ * query, so an earlier `display: none` here would simply be overridden.
+ */
+@media (max-width: 940px) {
+  .signin {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .signin__aside {
+    display: none;
+  }
+}

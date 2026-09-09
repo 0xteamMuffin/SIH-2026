@@ -1,0 +1,637 @@
+/*
+ * Application chrome: window frame, title bar, sidebar, content header,
+ * status bar.
+ *
+ * The shell is a fixed three-band grid — title bar, body, status bar — with
+ * the body split into sidebar / content / panel. Every band is a fixed height
+ * and every scroll happens *inside* a band, which is what keeps the composer
+ * pinned and the thread scrollable no matter how long a run gets.
+ */
+
+.app {
+  display: grid;
+  grid-template-rows: var(--titlebar-height) minmax(0, 1fr) var(--statusbar-height);
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+
+/*
+ * Column widths are set inline from `usePaneLayout` — they are draggable, and
+ * their limits depend on the live window width. The declaration here is the
+ * pre-hydration fallback only.
+ */
+.app__body {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  transition: grid-template-columns var(--duration-normal) var(--ease-out);
+}
+
+/* A transition on the columns makes the sidebar collapse smoothly, and makes
+   a drag feel like it is lagging behind the cursor. */
+html.is-resizing .app__body {
+  transition: none;
+}
+
+/* ── Dividers ──────────────────────────────────────────────────────────────
+ * 6px of hit area painting a 1px line. A divider you can see is not a
+ * divider you can grab.
+ */
+
+.resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: var(--z-panel);
+  width: 6px;
+  cursor: col-resize;
+}
+
+.resizer::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  content: "";
+  width: 1px;
+  background: transparent;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.resizer:hover::after,
+.resizer:focus-visible::after,
+.resizer--active::after {
+  background: var(--accent);
+}
+
+.resizer:focus-visible {
+  outline: none;
+}
+
+.resizer--sidebar {
+  right: 0;
+}
+
+.resizer--sidebar::after {
+  right: 0;
+}
+
+/*
+ * The panel divider lives inside the content column, not on the panel's own
+ * edge. The embedded browser is a native view painted over the panel, and
+ * anything overlapping it would never receive the pointer.
+ */
+.resizer--panel {
+  right: 0;
+}
+
+.resizer--panel::after {
+  right: 0;
+}
+
+/* While a drag is live, the cursor must not flicker back to a text caret as
+   it crosses the thread. */
+html.is-resizing,
+html.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.app--sidebar-hidden .resizer--sidebar {
+  display: none;
+}
+
+/* ── Title bar ─────────────────────────────────────────────────────────────
+ * Also the window's drag handle. Every interactive child has to opt out of
+ * that or it becomes un-clickable, hence the blanket `no-drag` rule below.
+ */
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  -webkit-app-region: drag;
+}
+
+.titlebar button,
+.titlebar input,
+.titlebar select,
+.titlebar .segmented {
+  -webkit-app-region: no-drag;
+}
+
+/* macOS inset traffic lights sit on top of the window, so the bar has to
+   start to the right of them. */
+.app--mac .titlebar {
+  padding-left: 78px;
+}
+
+.titlebar__group {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.titlebar__group--center {
+  flex: 0 1 380px;
+  justify-content: center;
+}
+
+.titlebar__group--end {
+  justify-content: flex-end;
+}
+
+/* ── Brand ─────────────────────────────────────────────────────────────── */
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding-right: var(--space-2);
+  min-width: 0;
+}
+
+.brand__mark {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--fg-on-accent);
+  background: linear-gradient(155deg, var(--accent-hover), var(--accent-active));
+  border-radius: var(--radius-sm);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    var(--shadow-xs);
+}
+
+.brand__name {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Workspace switcher ──────────────────────────────────────────────────── */
+
+.workspace {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  max-width: 220px;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--fg-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.workspace:hover {
+  color: var(--fg-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+}
+
+.workspace__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace__icon {
+  color: var(--fg-tertiary);
+}
+
+.workspace--static {
+  cursor: default;
+}
+
+.workspace--static:hover {
+  color: var(--fg-secondary);
+  background: none;
+  border-color: transparent;
+}
+
+/* ── Command palette trigger ─────────────────────────────────────────────── */
+
+.command-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 380px;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3) 0 var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--fg-quaternary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.command-trigger:hover {
+  color: var(--fg-secondary);
+  border-color: var(--border-default);
+}
+
+.command-trigger__label {
+  flex: 1;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────────────── */
+
+.sidebar {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+}
+
+.app--sidebar-hidden .sidebar {
+  border-right-color: transparent;
+}
+
+.sidebar__head {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-5) var(--space-4);
+}
+
+.sidebar__scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 0 var(--space-3) var(--space-4);
+  overflow-y: auto;
+}
+
+/* ── Chat list ─────────────────────────────────────────────────────────── */
+
+.chat-group {
+  padding-top: var(--space-4);
+}
+
+/*
+ * Sticky so the day a conversation belongs to is still on screen after
+ * scrolling into it. Needs its own background or rows show through.
+ */
+.chat-group__label {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  padding: var(--space-3) var(--space-4) var(--space-3);
+  background: var(--bg-surface);
+}
+
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  list-style: none;
+}
+
+.chat-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.chat-row__link {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  height: var(--control-height-lg);
+  padding: 0 var(--space-4);
+  text-align: left;
+  border-radius: var(--radius-md);
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.chat-row__link:hover {
+  background: var(--bg-hover);
+}
+
+.chat-row__link--active {
+  background: var(--bg-selected);
+}
+
+.chat-row__icon {
+  flex-shrink: 0;
+  color: var(--fg-quaternary);
+}
+
+.chat-row__link--active .chat-row__icon {
+  color: var(--accent-fg);
+}
+
+.chat-row__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  color: var(--fg-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-row__link--active .chat-row__title {
+  font-weight: var(--weight-medium);
+  color: var(--fg-primary);
+}
+
+.chat-row__time {
+  flex-shrink: 0;
+  font-size: var(--text-2xs);
+  color: var(--fg-quaternary);
+  font-variant-numeric: tabular-nums;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+/*
+ * Row actions replace the timestamp on hover rather than sitting beside it —
+ * a 264px sidebar has no room for both, and a title that truncates further on
+ * hover is worse than a timestamp that steps aside.
+ */
+.chat-row__actions {
+  position: absolute;
+  right: var(--space-2);
+  display: flex;
+  gap: var(--space-1);
+  padding-left: var(--space-4);
+  opacity: 0;
+  /* Hidden actions must not swallow clicks meant for the row. */
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--bg-surface) 40%);
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.chat-row:hover .chat-row__actions,
+.chat-row:focus-within .chat-row__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chat-row:hover .chat-row__time,
+.chat-row:focus-within .chat-row__time {
+  opacity: 0;
+}
+
+.chat-row__link--active + .chat-row__actions,
+.chat-row:has(.chat-row__link--active) .chat-row__actions {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--bg-selected), var(--bg-surface)) 40%
+  );
+}
+
+/* Inline rename. An input rather than contenteditable so Escape/Enter and
+   selection behave the way a field is expected to. */
+.chat-row__rename {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-height-lg);
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--fg-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+/*
+ * Deleting a conversation cannot be undone, so the trash icon arms a confirm
+ * in place instead of acting immediately. Two clicks, no modal.
+ */
+.chat-row--confirming .chat-row__link {
+  background: var(--danger-soft);
+}
+
+.chat-row__confirm {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.chat-empty {
+  padding: var(--space-9) var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--fg-tertiary);
+  text-align: center;
+}
+
+/* ── Sidebar footer / account ───────────────────────────────────────────── */
+
+.sidebar__foot {
+  flex-shrink: 0;
+  padding: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.account:hover {
+  background: var(--bg-hover);
+}
+
+.account__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.account__name {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--fg-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-caps);
+  color: var(--fg-tertiary);
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account__spacer {
+  flex: 1;
+}
+
+/* ── Content column ─────────────────────────────────────────────────────── */
+
+.main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* Without this the flex child cannot shrink below its content, so the
+     thread never becomes scrollable. */
+  min-height: 0;
+  background: var(--bg-app);
+}
+
+.main__head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-6);
+  height: var(--control-height-lg);
+  padding: 0 var(--space-8);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.main__title-group {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.main__title {
+  overflow: hidden;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.main__meta {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--fg-tertiary);
+}
+
+.main__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── Alert bar ───────────────────────────────────────────────────────────
+ * In-flow rather than a floating toast: an IPC or backend failure changes
+ * what the user can trust on screen, so it should not be dismissible by
+ * timing out while they are looking elsewhere.
+ */
+
+.alert {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5) var(--space-4) var(--space-8);
+  font-size: var(--text-sm);
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+  border-bottom: 1px solid var(--danger-border);
+  animation: rise-in var(--duration-normal) var(--ease-out);
+}
+
+.alert__text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Status bar ──────────────────────────────────────────────────────────── */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-6);
+  font-size: var(--text-2xs);
+  color: var(--fg-tertiary);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.statusbar__group {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.statusbar__group--end {
+  justify-content: flex-end;
+}
+
+.statusbar__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.statusbar__item--truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusbar__item--busy {
+  color: var(--info-fg);
+}
+
+.statusbar__item--warn {
+  color: var(--warning-fg);
+}
+
+.statusbar__separator {
+  width: 1px;
+  height: 11px;
+  background: var(--border-default);
+}

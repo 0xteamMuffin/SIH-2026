@@ -13,7 +13,21 @@ export interface BrowserPaneController {
   goForward: () => void;
   reload: () => void;
   openExternal: (url: string) => void;
+  /**
+   * Collapses the native view out of the way, and stops it following the
+   * layout, until tracking is switched back on.
+   *
+   * Needed for the panel divider. The native view sits *on top* of the
+   * window, outside the DOM, so while it covers the area a drag is moving
+   * through, the renderer receives no pointer events there and the drag
+   * stalls. Collapsing it for the duration of the drag hands those events
+   * back to the DOM.
+   */
+  setTracking: (tracking: boolean) => void;
 }
+
+/** Where the native view is parked while tracking is off. */
+const COLLAPSED_BOUNDS = { x: 0, y: 0, width: 0, height: 0 };
 
 /**
  * Drives the embedded browser pane.
@@ -27,6 +41,7 @@ export interface BrowserPaneController {
  */
 export function useBrowserPane(): BrowserPaneController {
   const [state, setState] = useState<BrowserPaneState>(CLOSED_BROWSER_PANE);
+  const [isTracking, setIsTracking] = useState(true);
   const slotElementRef = useRef<HTMLElement | null>(null);
   const isOpen = state.url !== null;
 
@@ -54,6 +69,13 @@ export function useBrowserPane(): BrowserPaneController {
   useEffect(() => {
     if (!isOpen) return;
 
+    // Tracking off: park the view and stop observing. Re-running this effect
+    // when it comes back on is what restores it to the settled layout.
+    if (!isTracking) {
+      void window.workbench.browser.setBounds(COLLAPSED_BOUNDS);
+      return;
+    }
+
     const push = (): void => {
       const bounds = measure();
       if (bounds) void window.workbench.browser.setBounds(bounds);
@@ -73,7 +95,7 @@ export function useBrowserPane(): BrowserPaneController {
       window.removeEventListener("resize", push);
       window.removeEventListener("scroll", push, true);
     };
-  }, [isOpen, measure]);
+  }, [isOpen, isTracking, measure]);
 
   const slotRef = useCallback((element: HTMLElement | null) => {
     slotElementRef.current = element;
@@ -103,6 +125,7 @@ export function useBrowserPane(): BrowserPaneController {
     slotRef,
     open,
     close,
+    setTracking: setIsTracking,
     goBack: useCallback(() => void window.workbench.browser.goBack().catch(reportToConsole), []),
     goForward: useCallback(() => void window.workbench.browser.goForward().catch(reportToConsole), []),
     reload: useCallback(() => void window.workbench.browser.reload().catch(reportToConsole), []),

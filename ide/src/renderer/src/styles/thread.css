@@ -1,0 +1,1035 @@
+/*
+ * The conversation: turns, prose, and the block renderers a turn is built
+ * from (run status, tool calls, approvals, diffs, documents, links).
+ */
+
+.thread {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-10) var(--space-8) var(--space-4);
+  overflow-y: auto;
+  /*
+   * Prose never scrolls sideways. `overflow-y: auto` alone resolves the other
+   * axis to `auto` too, so a single pixel of overflow — a wide table, a long
+   * unbroken token — puts a horizontal scrollbar across the whole thread.
+   * Code blocks and tables scroll within themselves instead.
+   */
+  overflow-x: hidden;
+  /* Keeps the last turn from being pinned under the composer's top edge. */
+  overscroll-behavior: contain;
+}
+
+.thread__inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-11);
+  max-width: var(--thread-measure);
+  margin: 0 auto;
+}
+
+/* ── Turns ─────────────────────────────────────────────────────────────────
+ * Agent turns run the full measure with a gutter avatar, because they carry
+ * structure — tool calls, diffs, documents — that a bubble would crush. User
+ * turns are short and are right-aligned so the eye can find the question that
+ * produced a long answer.
+ */
+
+.turn {
+  display: flex;
+  gap: var(--space-6);
+  min-width: 0;
+  animation: rise-in var(--duration-slow) var(--ease-out);
+}
+
+.turn__gutter {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: center;
+  width: 24px;
+  padding-top: 1px;
+}
+
+.turn__content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.turn__author {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: 20px;
+}
+
+.turn__name {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--fg-primary);
+}
+
+.turn__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+/* Turn actions appear on hover so the thread stays quiet at rest. */
+.turn__tools {
+  display: flex;
+  gap: var(--space-1);
+  margin-left: auto;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.turn:hover .turn__tools,
+.turn:focus-within .turn__tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.turn--user {
+  justify-content: flex-end;
+}
+
+.turn--user .turn__content {
+  flex: 0 1 auto;
+  align-items: flex-end;
+  max-width: 82%;
+}
+
+.turn--user .turn__body {
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-7);
+  color: var(--fg-primary);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-xl);
+}
+
+.turn--user .markdown {
+  color: var(--fg-primary);
+}
+
+/* ── Welcome / empty thread ────────────────────────────────────────────── */
+
+.welcome {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: var(--space-10) var(--space-8);
+  overflow-x: hidden;
+  overflow-y: auto;
+  text-align: center;
+}
+
+.welcome__mark {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: var(--space-9);
+  color: var(--fg-on-accent);
+  background: linear-gradient(155deg, var(--accent-hover), var(--accent-active));
+  border-radius: var(--radius-xl);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    var(--shadow-lg);
+}
+
+.welcome__title {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-display);
+  color: var(--fg-primary);
+}
+
+.welcome__body {
+  max-width: 460px;
+  margin-top: var(--space-4);
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  color: var(--fg-tertiary);
+}
+
+.welcome__cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-5);
+  width: 100%;
+  max-width: var(--thread-measure);
+  margin-top: var(--space-12);
+  list-style: none;
+}
+
+/* Three cards need ~640px to stay readable; below that they stack. */
+@media (max-width: 900px) {
+  .welcome__cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  height: 100%;
+  padding: var(--space-6);
+  text-align: left;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.suggestion:hover {
+  background: var(--bg-raised-hover);
+  border-color: var(--accent-border);
+  transform: translateY(-1px);
+}
+
+.suggestion__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--accent-fg);
+}
+
+.suggestion__label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.suggestion__text {
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--fg-secondary);
+}
+
+.welcome__hint {
+  margin-top: var(--space-9);
+  font-size: var(--text-xs);
+  color: var(--fg-quaternary);
+}
+
+/* ── Markdown ────────────────────────────────────────────────────────────── */
+
+.markdown {
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  color: var(--fg-secondary);
+  overflow-wrap: break-word;
+}
+
+.markdown > *:first-child {
+  margin-top: 0;
+}
+
+.markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown blockquote,
+.markdown table {
+  margin: 0 0 var(--space-6);
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  margin: var(--space-9) 0 var(--space-4);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fg-primary);
+}
+
+.markdown h1 {
+  font-size: var(--text-lg);
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: var(--space-9);
+}
+
+.markdown li {
+  margin: var(--space-2) 0;
+}
+
+.markdown li::marker {
+  color: var(--fg-quaternary);
+}
+
+.markdown strong {
+  font-weight: var(--weight-semibold);
+  color: var(--fg-primary);
+}
+
+.markdown code {
+  padding: 1.5px var(--space-3);
+  font-size: 0.875em;
+  color: var(--fg-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+}
+
+.markdown pre {
+  padding: var(--space-6) var(--space-7);
+  overflow-x: auto;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--fg-primary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.markdown pre code {
+  padding: 0;
+  font-size: inherit;
+  background: none;
+  border: none;
+}
+
+.markdown blockquote {
+  padding: var(--space-1) 0 var(--space-1) var(--space-6);
+  color: var(--fg-tertiary);
+  border-left: 2px solid var(--border-strong);
+}
+
+.markdown hr {
+  height: 1px;
+  margin: var(--space-9) 0;
+  background: var(--border-subtle);
+  border: none;
+}
+
+.markdown table {
+  width: 100%;
+  font-size: var(--text-sm);
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.markdown th,
+.markdown td {
+  padding: var(--space-4) var(--space-6);
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.markdown tr:last-child td {
+  border-bottom: none;
+}
+
+.markdown th {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--fg-primary);
+  background: var(--bg-inset);
+}
+
+/* ── Run status ──────────────────────────────────────────────────────────── */
+
+.run-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--fg-tertiary);
+}
+
+.run-status__label {
+  font-weight: var(--weight-medium);
+}
+
+.run-status--running .run-status__label,
+.run-status--queued .run-status__label,
+.run-status--awaiting-approval .run-status__label {
+  /* A live run is the one thing on screen that is still changing. */
+  color: var(--fg-secondary);
+}
+
+.run-status--failed {
+  color: var(--danger-fg);
+}
+
+.run-status--cancelled {
+  color: var(--fg-tertiary);
+}
+
+.run-status--completed {
+  color: var(--success-fg);
+}
+
+.run-status__detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-quaternary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Tool calls ──────────────────────────────────────────────────────────
+ * One row per step the agent took. Compact by design: on a long run this
+ * list is the majority of the turn, and a card per call would bury the
+ * answer underneath the work.
+ */
+
+.tool-calls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+}
+
+.tool-call {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--fg-secondary);
+  border-radius: var(--radius-sm);
+}
+
+.tool-call__glyph {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-quaternary);
+}
+
+.tool-call__name {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-primary);
+}
+
+.tool-call__summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-call--completed .tool-call__glyph {
+  color: var(--success);
+}
+
+.tool-call--failed {
+  color: var(--danger-fg);
+}
+
+.tool-call--failed .tool-call__glyph {
+  color: var(--danger);
+}
+
+.tool-call--rejected .tool-call__glyph,
+.tool-call--awaiting-approval .tool-call__glyph {
+  color: var(--warning);
+}
+
+.tool-call--rejected .tool-call__name,
+.tool-call--rejected .tool-call__summary {
+  color: var(--fg-quaternary);
+  text-decoration: line-through;
+}
+
+/* ── Approval gate ───────────────────────────────────────────────────────
+ * The one interactive block. Styled as a genuine gate — accent border, its
+ * own header, the exact payload — because approving code nobody read is the
+ * failure this exists to prevent.
+ */
+
+.approval {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-7);
+  background: var(--bg-raised);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.approval__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.approval__icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  color: var(--warning-fg);
+  background: var(--warning-soft);
+  border-radius: var(--radius-sm);
+}
+
+.approval__title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--fg-primary);
+}
+
+.approval__tool {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-tertiary);
+}
+
+.approval__prompt {
+  font-size: var(--text-sm);
+  color: var(--fg-secondary);
+}
+
+.approval__payload {
+  max-height: 280px;
+  padding: var(--space-6);
+  overflow: auto;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--fg-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.approval__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.approval__decided {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--fg-tertiary);
+}
+
+.approval__decided--approved {
+  color: var(--success-fg);
+}
+
+.approval__error {
+  font-size: var(--text-sm);
+  color: var(--danger-fg);
+}
+
+/* ── Diff ────────────────────────────────────────────────────────────────── */
+
+.diff {
+  overflow: hidden;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.diff__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  text-align: left;
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.diff__header:hover {
+  background: var(--bg-raised-hover);
+}
+
+.diff--collapsed .diff__header {
+  border-bottom-color: transparent;
+}
+
+.diff__chevron {
+  flex-shrink: 0;
+  color: var(--fg-tertiary);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.diff__chevron--collapsed {
+  transform: rotate(-90deg);
+}
+
+.diff__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--fg-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff__previous-path {
+  color: var(--fg-quaternary);
+}
+
+.diff__stats {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.diff__stat--add {
+  color: var(--diff-add-fg);
+}
+
+.diff__stat--del {
+  color: var(--diff-del-fg);
+}
+
+.diff__body {
+  max-height: 480px;
+  overflow: auto;
+}
+
+.diff__empty {
+  padding: var(--space-6);
+  font-size: var(--text-sm);
+  color: var(--fg-tertiary);
+}
+
+.diff__table {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  border-collapse: collapse;
+}
+
+.diff__hunk-header {
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-xs);
+  color: var(--fg-quaternary);
+  text-align: left;
+  background: var(--bg-inset);
+  border-top: 1px solid var(--border-subtle);
+  caption-side: top;
+}
+
+.diff__table:first-child .diff__hunk-header {
+  border-top: none;
+}
+
+.diff__line--add {
+  background: var(--diff-add-bg);
+}
+
+.diff__line--del {
+  background: var(--diff-del-bg);
+}
+
+/* Line numbers stay put while long lines scroll under them. */
+.diff__gutter {
+  width: 1%;
+  padding: 0 var(--space-4);
+  color: var(--fg-quaternary);
+  text-align: right;
+  vertical-align: top;
+  white-space: nowrap;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.diff__line--add .diff__gutter {
+  background: var(--diff-add-gutter);
+}
+
+.diff__line--del .diff__gutter {
+  background: var(--diff-del-gutter);
+}
+
+.diff__marker {
+  width: 1%;
+  padding: 0 var(--space-2);
+  text-align: center;
+  vertical-align: top;
+  user-select: none;
+}
+
+.diff__line--add .diff__marker,
+.diff__line--add .diff__code {
+  color: var(--diff-add-fg);
+}
+
+.diff__line--del .diff__marker,
+.diff__line--del .diff__code {
+  color: var(--diff-del-fg);
+}
+
+.diff__line--context .diff__code {
+  color: var(--fg-secondary);
+}
+
+.diff__code {
+  padding: 0 var(--space-6) 0 var(--space-2);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* ── Document card ───────────────────────────────────────────────────────── */
+
+.document-card {
+  overflow: hidden;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.document-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-5);
+}
+
+.document-card__icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--fg-secondary);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.document-card__meta {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.document-card__name {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--fg-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.document-card__sub {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--fg-tertiary);
+}
+
+.document-card__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.document-card__note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--text-xs);
+  color: var(--fg-tertiary);
+  background: var(--bg-inset);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.document-card__note--error {
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+}
+
+.document-card__viewer {
+  max-height: 560px;
+  overflow: auto;
+  background: var(--bg-inset);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ── Link card (opens the browser pane) ─────────────────────────────────── */
+
+.link-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  width: 100%;
+  padding: var(--space-5);
+  text-align: left;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+.link-card:hover {
+  background: var(--bg-raised-hover);
+  border-color: var(--accent-border);
+}
+
+.link-card__icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--accent-fg);
+  background: var(--accent-soft);
+  border-radius: var(--radius-md);
+}
+
+.link-card__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.link-card__title {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--fg-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-card__url {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Preview chrome, shared by every viewer ─────────────────────────────── */
+
+.preview__state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-8);
+  font-size: var(--text-sm);
+  color: var(--fg-tertiary);
+}
+
+.preview__state--error {
+  color: var(--danger-fg);
+}
+
+.preview__note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--text-xs);
+  color: var(--fg-tertiary);
+  background: var(--bg-hover);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ── PDF ─────────────────────────────────────────────────────────────────
+ * Pages are real paper, so they get a mat behind them and a shadow rather
+ * than inheriting the app surface. That reads as a document viewer in both
+ * themes without the page itself changing colour.
+ */
+
+.pdf__pages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-6);
+  background: var(--bg-paper-mat);
+}
+
+.pdf__page {
+  display: block;
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: var(--shadow-md);
+}
+
+/* ── Spreadsheet ─────────────────────────────────────────────────────────── */
+
+.sheet__tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4) 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sheet__tab {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 var(--space-6);
+  font-size: var(--text-xs);
+  color: var(--fg-tertiary);
+  white-space: nowrap;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.sheet__tab:hover {
+  color: var(--fg-secondary);
+  background: var(--bg-hover);
+}
+
+.sheet__tab--active {
+  font-weight: var(--weight-medium);
+  color: var(--fg-primary);
+  background: var(--bg-raised);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.sheet__scroll {
+  max-height: 460px;
+  overflow: auto;
+}
+
+.sheet__table {
+  font-size: var(--text-sm);
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet__table th,
+.sheet__table td {
+  max-width: 320px;
+  padding: var(--space-2) var(--space-5);
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border-subtle);
+}
+
+.sheet__table thead th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  font-weight: var(--weight-semibold);
+  color: var(--fg-primary);
+  background: var(--bg-raised);
+}
+
+.sheet__table td {
+  color: var(--fg-secondary);
+}
+
+/* Row-number gutter, pinned while the table scrolls sideways. */
+.sheet__rownum,
+.sheet__corner {
+  position: sticky;
+  left: 0;
+  z-index: var(--z-sticky);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-normal);
+  color: var(--fg-quaternary);
+  text-align: right;
+  background: var(--bg-raised);
+  user-select: none;
+}
+
+.sheet__corner {
+  z-index: calc(var(--z-sticky) + 1);
+}
+
+/* ── Word documents ──────────────────────────────────────────────────────
+ * docx-preview emits its own stylesheet targeting the document's real page
+ * geometry, so the host only supplies the mat it sits on and lets the library
+ * own everything inside.
+ */
+
+.docx-host {
+  padding: var(--space-6);
+  background: var(--bg-paper-mat);
+}
+
+.docx-host .docx-wrapper {
+  padding: 0;
+  background: transparent;
+}
+
+.docx-host .docx {
+  color: #1a1a1a;
+  background: #fff;
+  box-shadow: var(--shadow-md);
+}
+
+/* ── Text files ──────────────────────────────────────────────────────────── */
+
+.textfile__body {
+  max-height: 460px;
+  padding: var(--space-6);
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--fg-secondary);
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* ── Images ──────────────────────────────────────────────────────────────── */
+
+.image-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  margin: var(--space-6) auto;
+  object-fit: contain;
+}

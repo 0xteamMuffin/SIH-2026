@@ -1,9 +1,16 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import type { MessageBlock, PreviewCapabilities, StatusBlock } from "@shared/types.js";
+import type {
+  MessageBlock,
+  PreviewCapabilities,
+  RunState,
+  StatusBlock,
+  ToolCallBlock,
+} from "@shared/types.js";
 import { isTerminalRunState } from "@shared/types.js";
 
+import { Icon, type IconName } from "../ui/Icon.js";
 import { ApprovalView } from "./ApprovalView.js";
 import { DiffView } from "./DiffView.js";
 import { DocumentCard } from "./DocumentCard.js";
@@ -19,8 +26,9 @@ export interface MessageBlocksProps {
 /**
  * Renders a message's blocks in order.
  *
- * The switch is exhaustive over `MessageBlock`, so adding a block kind to the
- * shared contract surfaces here as a type error until it has a renderer.
+ * Adjacent tool calls are collected into one list first. A long run is mostly
+ * tool calls, and rendering each as a standalone block spaced like prose
+ * turns the agent's work into a wall that buries the answer under it.
  */
 export function MessageBlocks({
   blocks,
@@ -29,19 +37,57 @@ export function MessageBlocks({
 }: MessageBlocksProps): React.JSX.Element {
   return (
     <>
-      {blocks.map((block, index) => (
-        <BlockView key={index} block={block} capabilities={capabilities} onOpenUrl={onOpenUrl} />
-      ))}
+      {groupToolCalls(blocks).map((group, index) =>
+        group.kind === "tool-group" ? (
+          <ul key={index} className="tool-calls">
+            {group.calls.map((call, callIndex) => (
+              <ToolCallView key={callIndex} block={call} />
+            ))}
+          </ul>
+        ) : (
+          <BlockView
+            key={index}
+            block={group.block}
+            capabilities={capabilities}
+            onOpenUrl={onOpenUrl}
+          />
+        ),
+      )}
     </>
   );
 }
 
+type RenderGroup =
+  | { kind: "tool-group"; calls: ToolCallBlock[] }
+  | { kind: "single"; block: Exclude<MessageBlock, ToolCallBlock> };
+
+function groupToolCalls(blocks: MessageBlock[]): RenderGroup[] {
+  const groups: RenderGroup[] = [];
+
+  for (const block of blocks) {
+    if (block.kind !== "tool") {
+      groups.push({ kind: "single", block });
+      continue;
+    }
+
+    const previous = groups.at(-1);
+    if (previous?.kind === "tool-group") previous.calls.push(block);
+    else groups.push({ kind: "tool-group", calls: [block] });
+  }
+
+  return groups;
+}
+
+/**
+ * The switch is exhaustive over `MessageBlock`, so adding a block kind to the
+ * shared contract surfaces here as a type error until it has a renderer.
+ */
 function BlockView({
   block,
   capabilities,
   onOpenUrl,
 }: {
-  block: MessageBlock;
+  block: Exclude<MessageBlock, ToolCallBlock>;
   capabilities: PreviewCapabilities | null;
   onOpenUrl: (url: string) => void;
 }): React.JSX.Element {
@@ -54,10 +100,7 @@ function BlockView({
       );
 
     case "status":
-      return <StatusLine block={block} />;
-
-    case "tool":
-      return <ToolCallView block={block} />;
+      return <RunStatus block={block} />;
 
     case "approval":
       return <ApprovalView block={block} />;
@@ -70,30 +113,46 @@ function BlockView({
 
     case "browser":
       return (
-        <button type="button" className="browser-chip" onClick={() => onOpenUrl(block.url)}>
-          <span className="browser-chip__icon" aria-hidden="true">
-            ◴
+        <button type="button" className="link-card" onClick={() => onOpenUrl(block.url)}>
+          <span className="link-card__icon">
+            <Icon name="globe" size={16} />
           </span>
-          <span className="browser-chip__text">
-            <span className="browser-chip__title">{block.title ?? "Open in browser pane"}</span>
-            <span className="browser-chip__url">{block.url}</span>
+          <span className="link-card__text">
+            <span className="link-card__title">{block.title ?? "Open in the browser pane"}</span>
+            <span className="link-card__url">{block.url}</span>
           </span>
+          <Icon name="arrow-up-right" size={14} />
         </button>
       );
   }
 }
 
-function StatusLine({ block }: { block: StatusBlock }): React.JSX.Element {
+const STATE_ICONS: Record<RunState, IconName> = {
+  queued: "clock",
+  running: "circle-dot",
+  "awaiting-approval": "pause",
+  completed: "check-circle",
+  failed: "x-circle",
+  cancelled: "ban",
+};
+
+function RunStatus({ block }: { block: StatusBlock }): React.JSX.Element {
   const isActive = !isTerminalRunState(block.state);
 
   return (
-    <p className={`status-line status-line--${block.state}`}>
-      <span
-        className={`status-line__dot ${isActive ? "status-line__dot--pulsing" : ""}`}
-        aria-hidden="true"
-      />
-      <span>{block.label}</span>
-      {block.detail && <span className="status-line__detail">{block.detail}</span>}
+    <p
+      className={`run-status run-status--${block.state}`}
+      // Announced as it changes, so a screen reader user hears the run
+      // progressing rather than only its final answer.
+      aria-live={isActive ? "polite" : "off"}
+    >
+      {isActive ? (
+        <span className="spinner" aria-hidden="true" />
+      ) : (
+        <Icon name={STATE_ICONS[block.state]} size={14} />
+      )}
+      <span className="run-status__label">{block.label}</span>
+      {block.detail && <span className="run-status__detail">{block.detail}</span>}
     </p>
   );
 }

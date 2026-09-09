@@ -2,6 +2,8 @@ import { join } from "node:path";
 
 import { BrowserWindow } from "electron";
 
+import { registerZoomShortcuts } from "./zoom.js";
+
 /** Below this the three-pane layout stops being usable. */
 const MIN_WIDTH = 900;
 const MIN_HEIGHT = 600;
@@ -15,8 +17,16 @@ export function createMainWindow(): BrowserWindow {
     // Painting only once the renderer is ready avoids a white flash against
     // the dark UI.
     show: false,
-    backgroundColor: "#090909",
+    // Matches `--bg-canvas` in the renderer's dark theme, which is the
+    // default a fresh profile opens in. The window is hidden until the
+    // renderer has applied the stored theme, so this is only ever seen for
+    // the frame before `ready-to-show`.
+    backgroundColor: "#0b0a09",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    // Belt and braces: the application menu is removed on Windows and Linux
+    // (see menu.ts) because the shell draws its own title bar, and a native
+    // menu bar above it would look grafted on.
+    autoHideMenuBar: true,
     webPreferences: {
       preload: join(import.meta.dirname, "../preload/index.js"),
       sandbox: true,
@@ -25,6 +35,8 @@ export function createMainWindow(): BrowserWindow {
       webviewTag: false,
     },
   });
+
+  registerZoomShortcuts(window);
 
   window.once("ready-to-show", () => window.show());
 
