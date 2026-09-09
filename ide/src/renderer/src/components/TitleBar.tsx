@@ -10,10 +10,14 @@ export interface TitleBarProps {
   onSelectWorkspace: (workspaceId: string) => void;
   sidebarVisible: boolean;
   onToggleSidebar: () => void;
+  /** False outside the workbench, where there is no conversation list. */
+  sidebarToggleEnabled: boolean;
   tracePanelOpen: boolean;
   onToggleTracePanel: () => void;
   browserPanelOpen: boolean;
   onToggleBrowserPanel: () => void;
+  /** False outside the workbench, where the inspector has nothing to inspect. */
+  panelTogglesEnabled: boolean;
   onOpenPalette: () => void;
   /** Rendered into the keyboard hints — ⌘ on macOS, Ctrl elsewhere. */
   modifierLabel: string;
@@ -32,10 +36,12 @@ export function TitleBar({
   onSelectWorkspace,
   sidebarVisible,
   onToggleSidebar,
+  sidebarToggleEnabled,
   tracePanelOpen,
   onToggleTracePanel,
   browserPanelOpen,
   onToggleBrowserPanel,
+  panelTogglesEnabled,
   onOpenPalette,
   modifierLabel,
 }: TitleBarProps): React.JSX.Element {
@@ -46,7 +52,8 @@ export function TitleBar({
           icon="panel-left"
           label={sidebarVisible ? "Hide conversations" : "Show conversations"}
           size="sm"
-          active={sidebarVisible}
+          active={sidebarVisible && sidebarToggleEnabled}
+          disabled={!sidebarToggleEnabled}
           onClick={onToggleSidebar}
         />
 
@@ -80,14 +87,16 @@ export function TitleBar({
           icon="network"
           label="Run trace"
           size="sm"
-          active={tracePanelOpen}
+          active={tracePanelOpen && panelTogglesEnabled}
+          disabled={!panelTogglesEnabled}
           onClick={onToggleTracePanel}
         />
         <IconButton
           icon="globe"
           label="Browser pane"
           size="sm"
-          active={browserPanelOpen}
+          active={browserPanelOpen && panelTogglesEnabled}
+          disabled={!panelTogglesEnabled}
           onClick={onToggleBrowserPanel}
           tooltipAlign="end"
         />

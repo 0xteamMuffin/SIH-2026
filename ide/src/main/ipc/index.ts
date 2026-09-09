@@ -5,6 +5,7 @@ import type { SessionManager } from "../services/session.js";
 import { registerBrowserHandlers } from "./browser.js";
 import { registerChatHandlers } from "./chat.js";
 import { registerDocumentHandlers } from "./document.js";
+import { registerGovernanceHandlers } from "./governance.js";
 import { registerPreviewHandlers } from "./preview.js";
 import { registerSessionHandlers } from "./session.js";
 
@@ -27,4 +28,5 @@ export function registerIpcHandlers({ chats, documents, session, browserPane }: 
   registerPreviewHandlers();
   registerDocumentHandlers(documents, session);
   registerBrowserHandlers(browserPane);
+  registerGovernanceHandlers(session);
 }

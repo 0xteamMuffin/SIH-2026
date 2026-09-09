@@ -75,6 +75,33 @@ const api: WorkbenchApi = {
     openExternal: (url) => invoke("browser:open-external", url),
   },
 
+  sovereignty: {
+    posture: () => invoke("sovereignty:posture", undefined),
+    egress: (options = {}) => invoke("sovereignty:egress", options),
+    probe: (workspaceId) =>
+      invoke("sovereignty:probe", workspaceId ? { workspaceId } : {}),
+  },
+
+  admin: {
+    modelProviders: () => invoke("admin:model-providers", undefined),
+    users: () => invoke("admin:users", undefined),
+    createUser: (email, password, role) => invoke("admin:create-user", { email, password, role }),
+    disableUser: (userId) => invoke("admin:disable-user", userId),
+    createWorkspace: (name) => invoke("admin:create-workspace", name),
+    workspaceMembers: (workspaceId) => invoke("admin:workspace-members", workspaceId),
+    addMember: (workspaceId, userId, role) =>
+      invoke("admin:add-member", { workspaceId, userId, role }),
+    updateMemberRole: (workspaceId, userId, role) =>
+      invoke("admin:update-member-role", { workspaceId, userId, role }),
+    removeMember: (workspaceId, userId) => invoke("admin:remove-member", { workspaceId, userId }),
+  },
+
+  audit: {
+    list: (query) => invoke("audit:list", query),
+    export: (workspaceId, format, filters = {}) =>
+      invoke("audit:export", { workspaceId, format, filters }),
+  },
+
   onEvent: (listener: (event: MainEvent) => void): (() => void) => {
     const handler = (_event: unknown, payload: MainEvent): void => listener(payload);
     ipcRenderer.on(MAIN_EVENT_CHANNEL, handler);

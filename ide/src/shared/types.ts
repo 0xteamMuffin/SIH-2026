@@ -416,3 +416,223 @@ export const DISCONNECTED_SESSION: SessionState = {
   baseUrl: "",
   workspaces: [],
 };
+
+// ─── Governance ──────────────────────────────────────────────────────────────
+//
+// Types for the administration and sovereignty surfaces. These mirror the
+// backend's response shapes exactly rather than reshaping them: the IDE is a
+// viewer for the backend's own record, and a translation layer here would be
+// one more place for the displayed evidence to drift from the recorded truth.
+
+/** How a user's global role gates the governance views. */
+export type UserRoleName = "ADMIN" | "OPERATOR" | "REVIEWER";
+
+// ─── Sovereignty posture ─────────────────────────────────────────────────────
+
+export type ProviderLocation = "local" | "remote";
+
+export type ModelCapabilityName =
+  | "general"
+  | "document"
+  | "vision"
+  | "code"
+  | "embedding"
+  | "reranking";
+
+/**
+ * `enforced` — active and blocking egress right now.
+ * `development` — deliberately relaxed for the development profile.
+ * `structural` — a property of the code that cannot be switched off.
+ */
+export type SovereigntyControlState = "enforced" | "development" | "structural";
+
+export interface SovereigntyControl {
+  id: string;
+  title: string;
+  detail: string;
+  /** Where a reviewer can confirm the control for themselves. */
+  evidence: string;
+  state: SovereigntyControlState;
+}
+
+export interface SovereigntyProfileInfo {
+  profileId: string;
+  modelId: string;
+  capabilities: ModelCapabilityName[];
+  priority: number;
+  enabled: boolean;
+  /** Whether the router may currently choose this profile. */
+  selectable: boolean;
+}
+
+export interface SovereigntyProvider {
+  providerId: string;
+  location: ProviderLocation;
+  /** Host only. The backend never returns a credential-bearing URL. */
+  host: string | null;
+  requiresApiKey: boolean;
+  apiKeyPresent: boolean;
+  reachablePolicy: boolean;
+  profiles: SovereigntyProfileInfo[];
+}
+
+export interface CapabilityCoverage {
+  capability: ModelCapabilityName;
+  localProfiles: number;
+  remoteProfiles: number;
+  /** True when the capability can be served without leaving the premises. */
+  sovereignReady: boolean;
+}
+
+export interface SovereigntyPosture {
+  mode: "development" | "sovereign";
+  sovereign: boolean;
+  allowRemoteInference: boolean;
+  controls: SovereigntyControl[];
+  providers: SovereigntyProvider[];
+  capabilityCoverage: CapabilityCoverage[];
+  /** Classifications refused a remote route regardless of mode. */
+  remoteDeniedClassifications: DataClassification[];
+  checkedAt: string;
+}
+
+// ─── Egress ledger ───────────────────────────────────────────────────────────
+
+export type EgressChannel = ProviderLocation | "unknown";
+
+export interface EgressEntry {
+  id: string;
+  kind: "inference" | "embedding";
+  at: string;
+  channel: EgressChannel;
+  providerId: string;
+  host: string | null;
+  profileId: string;
+  modelId: string;
+  status: string;
+  latencyMs: number | null;
+  totalTokens: number | null;
+  runId: string | null;
+  workspaceId: string | null;
+}
+
+export interface EgressSummary {
+  /** Start of the window, or `null` for all recorded history. */
+  since: string | null;
+  localCalls: number;
+  remoteCalls: number;
+  /** Calls whose provider is no longer declared, so unclassifiable. */
+  unknownCalls: number;
+  /** Refusals recorded by the policy guard — attempts that never left. */
+  blockedAttempts: number;
+  remoteHosts: string[];
+}
+
+export interface EgressLedger {
+  summary: EgressSummary;
+  entries: EgressEntry[];
+}
+
+export interface EgressProbeTarget {
+  host: string;
+  url: string;
+  verdict: "blocked" | "reachable";
+  /** Transport-level reason, present when blocked. */
+  reason?: string;
+  latencyMs: number;
+}
+
+export interface EgressProbeResult {
+  mode: "development" | "sovereign";
+  /** True when every declared remote destination refused the connection. */
+  allBlocked: boolean;
+  targets: EgressProbeTarget[];
+  probedAt: string;
+}
+
+// ─── Model provider health ───────────────────────────────────────────────────
+
+export type ProviderProbeStatus =
+  | "available"
+  | "degraded"
+  | "unavailable"
+  | "not_configured"
+  | "disabled";
+
+export interface ModelProviderStatus {
+  providerId: string;
+  location: ProviderLocation;
+  status: ProviderProbeStatus;
+  capabilities: ModelCapabilityName[];
+  availableCapabilities: ModelCapabilityName[];
+  profiles: Array<{
+    profileId: string;
+    modelId: string;
+    capabilities: ModelCapabilityName[];
+    /** `null` when the provider was never contacted. */
+    available: boolean | null;
+  }>;
+  latencyMs?: number;
+  errorCode?: string;
+}
+
+export interface ModelProviderStatusResult {
+  checkedAt: string;
+  providers: ModelProviderStatus[];
+}
+
+// ─── Users and membership ────────────────────────────────────────────────────
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  role: UserRoleName;
+  /** Set once the account has been disabled; its sessions are revoked. */
+  disabledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceMember {
+  workspaceId: string;
+  userId: string;
+  /** Role *within this workspace*, which may differ from the account's role. */
+  role: UserRoleName;
+  user: {
+    id: string;
+    email: string;
+    role: UserRoleName;
+    disabledAt: string | null;
+    createdAt: string;
+  };
+}
+
+// ─── Audit ───────────────────────────────────────────────────────────────────
+
+export interface AuditEvent {
+  id: string;
+  actorId: string | null;
+  workspaceId: string | null;
+  runId: string | null;
+  eventType: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AuditQuery {
+  workspaceId: string;
+  eventType?: string;
+  actorId?: string;
+  runId?: string;
+  /** ISO-8601, inclusive. */
+  from?: string;
+  to?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface AuditPage {
+  auditEvents: AuditEvent[];
+  /** Opaque; pass back as `cursor` for the next page. `null` at the end. */
+  nextCursor: string | null;
+}

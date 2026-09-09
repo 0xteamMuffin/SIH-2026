@@ -120,6 +120,30 @@ export class SessionManager {
   }
 
   /**
+   * Re-reads the workspace list from the backend.
+   *
+   * Needed after administration creates one: the list is published to the
+   * renderer at connect time, so without this a workspace someone just made
+   * would not be selectable until the next sign-in. The current selection is
+   * preserved when it still exists, since re-reading should not move the user.
+   */
+  async refreshWorkspaces(): Promise<SessionState> {
+    const client = this.client();
+    if (!client || this.#state.status !== "connected") return this.#state;
+
+    const workspaces = await this.#resolveWorkspaces(client);
+    const selected =
+      workspaces.find((candidate) => candidate.id === this.#state.workspace?.id) ?? workspaces[0];
+
+    this.#publish({
+      ...this.#state,
+      workspaces,
+      ...(selected ? { workspace: selected } : {}),
+    });
+    return this.#state;
+  }
+
+  /**
    * Resolves the workspaces to offer, with the default first.
    *
    * The choice has to be *stable*. The backend lists newest first, so taking

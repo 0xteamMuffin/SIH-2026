@@ -7,9 +7,13 @@ import { ChatSidebar } from "./components/ChatSidebar.js";
 import { ChatThread } from "./components/ChatThread.js";
 import { CommandPalette, type Command } from "./components/CommandPalette.js";
 import { Composer } from "./components/Composer.js";
+import { NavRail, VIEW_LABELS, type WorkbenchView } from "./components/NavRail.js";
 import { SignIn } from "./components/SignIn.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { TitleBar } from "./components/TitleBar.js";
+import { AdminView } from "./views/AdminView.js";
+import { AuditView } from "./views/AuditView.js";
+import { SovereigntyView } from "./views/SovereigntyView.js";
 import { Icon } from "./components/ui/Icon.js";
 import { IconButton } from "./components/ui/IconButton.js";
 import type { PanelTab } from "./components/ui/PanelTabs.js";
@@ -18,6 +22,7 @@ import { TracePanel } from "./components/trace/TracePanel.js";
 import { useBrowserPane } from "./hooks/useBrowserPane.js";
 import { useChats } from "./hooks/useChats.js";
 import { usePaneLayout } from "./hooks/usePaneLayout.js";
+import { useRemoteResource } from "./hooks/useRemoteResource.js";
 import { useSession } from "./hooks/useSession.js";
 import { useTheme } from "./theme/ThemeProvider.js";
 
@@ -28,6 +33,12 @@ const BLANK_PAGE = "https://example.com";
 const IS_MAC = navigator.userAgent.includes("Mac");
 const MODIFIER_LABEL = IS_MAC ? "⌘" : "Ctrl";
 
+/** Width of the navigation rail. Matches `.nav-rail` in views.css. */
+const RAIL_WIDTH = "44px";
+
+/** Order of the rail, and of the accelerator that selects each view. */
+const VIEW_ORDER: readonly WorkbenchView[] = ["workbench", "sovereignty", "audit", "admin"];
+
 export function App(): React.JSX.Element {
   const chats = useChats();
   const pane = useBrowserPane();
@@ -36,6 +47,7 @@ export function App(): React.JSX.Element {
   const { session, isReady, connect, disconnect, selectWorkspace } = useSession();
   const { setTheme, toggleTheme, resolved } = useTheme();
 
+  const [view, setView] = useState<WorkbenchView>("workbench");
   const [trace, setTrace] = useState<RunTrace | null>(null);
   // Remembers a run the user hid, so it is not reopened on the next poll.
   const [hiddenRunId, setHiddenRunId] = useState<string | null>(null);
@@ -47,6 +59,25 @@ export function App(): React.JSX.Element {
   // Classification is lifted out of the composer so the status bar can show
   // the routing policy the next message will be sent under.
   const [classification, setClassification] = useState<DataClassification>("SYNTHETIC");
+
+  /**
+   * The enforcement posture, read once per connection.
+   *
+   * Only used here to flag the sovereignty item on the rail: a deployment that
+   * *can* reach the internet is the one condition worth pulling someone's
+   * attention to without their asking. The Sovereignty view fetches its own,
+   * so this stays a cheap configuration read.
+   */
+  const posture = useRemoteResource(
+    useCallback(
+      () =>
+        session.status === "connected"
+          ? window.workbench.sovereignty.posture()
+          : Promise.resolve(null),
+      [session.status],
+    ),
+    `posture:${session.status}`,
+  );
 
   const latestTrace = useMemo(() => {
     const messages = chats.activeChat?.messages ?? [];
@@ -137,6 +168,21 @@ export function App(): React.JSX.Element {
     else selectPanelTab("browser");
   }, [pane, selectPanelTab]);
 
+  /**
+   * Switches view.
+   *
+   * The browser pane has to be closed on the way out of the workbench: it is a
+   * native view painted over the window, so it would otherwise sit on top of
+   * whichever governance view was opened underneath it.
+   */
+  const selectView = useCallback(
+    (next: WorkbenchView) => {
+      if (next !== "workbench" && pane.isOpen) pane.close();
+      setView(next);
+    },
+    [pane],
+  );
+
   // Global shortcuts. Registered on the window rather than on a focused
   // element so they work no matter where the caret is — including inside the
   // composer, which is where it usually is.
@@ -159,15 +205,42 @@ export function App(): React.JSX.Element {
       if (key === "n" && !event.shiftKey) {
         event.preventDefault();
         chats.newChat();
+        selectView("workbench");
+        return;
+      }
+      // Accelerator per view, in rail order.
+      const index = Number.parseInt(key, 10);
+      if (Number.isInteger(index) && index >= 1 && index <= VIEW_ORDER.length) {
+        event.preventDefault();
+        const target = VIEW_ORDER[index - 1];
+        if (target) selectView(target);
       }
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [chats]);
+  }, [chats, selectView]);
 
   const commands = useMemo(
     (): Command[] => [
+      ...VIEW_ORDER.map(
+        (target, index): Command => ({
+          id: `view:${target}`,
+          group: "Go to",
+          label: VIEW_LABELS[target],
+          icon:
+            target === "workbench"
+              ? "message"
+              : target === "sovereignty"
+                ? "shield"
+                : target === "audit"
+                  ? "activity"
+                  : "sliders",
+          hint: `${MODIFIER_LABEL} ${index + 1}`,
+          keywords: "view switch open",
+          run: () => selectView(target),
+        }),
+      ),
       ...chats.chats.slice(0, 40).map(
         (chat): Command => ({
           id: `chat:${chat.id}`,
@@ -175,7 +248,10 @@ export function App(): React.JSX.Element {
           label: chat.title,
           icon: "message",
           keywords: "open conversation chat",
-          run: () => chats.selectChat(chat.id),
+          run: () => {
+            chats.selectChat(chat.id);
+            selectView("workbench");
+          },
         }),
       ),
       {
@@ -184,7 +260,10 @@ export function App(): React.JSX.Element {
         label: "New conversation",
         icon: "plus",
         hint: `${MODIFIER_LABEL} N`,
-        run: chats.newChat,
+        run: () => {
+          chats.newChat();
+          selectView("workbench");
+        },
       },
       {
         id: "action:sidebar",
@@ -201,7 +280,10 @@ export function App(): React.JSX.Element {
         label: "Show run trace",
         icon: "network",
         keywords: "graph audit steps",
-        run: () => selectPanelTab("trace"),
+        run: () => {
+          selectView("workbench");
+          selectPanelTab("trace");
+        },
       },
       {
         id: "action:browser",
@@ -209,7 +291,10 @@ export function App(): React.JSX.Element {
         label: "Open browser pane",
         icon: "globe",
         keywords: "web page url",
-        run: () => selectPanelTab("browser"),
+        run: () => {
+          selectView("workbench");
+          selectPanelTab("browser");
+        },
       },
       {
         id: "theme:toggle",
@@ -236,7 +321,7 @@ export function App(): React.JSX.Element {
         run: disconnect,
       },
     ],
-    [chats, sidebarVisible, resolved, selectPanelTab, toggleTheme, setTheme, disconnect],
+    [chats, sidebarVisible, resolved, selectPanelTab, selectView, toggleTheme, setTheme, disconnect],
   );
 
   // Nothing in the workbench works without the backend — every answer comes
@@ -254,153 +339,192 @@ export function App(): React.JSX.Element {
     return <SignIn session={session} onConnect={connect} />;
   }
 
-  const panelOpen = pane.isOpen || trace !== null;
+  const isWorkbench = view === "workbench";
+  const panelOpen = isWorkbench && (pane.isOpen || trace !== null);
 
-  // The grid's columns are the resizable layout. A collapsed sidebar is a
-  // zero-width column rather than an unmounted one, so its contents do not
-  // reflow on every toggle.
+  // The grid's columns are the resizable layout, behind a fixed rail. A
+  // collapsed sidebar is a zero-width column rather than an unmounted one, so
+  // its contents do not reflow on every toggle. The governance views take the
+  // whole width — they are tables, not a conversation with an inspector.
   const bodyColumns = [
-    sidebarVisible ? `${layout.sidebarWidth}px` : "0px",
-    "minmax(0, 1fr)",
-    panelOpen ? `${layout.panelWidth}px` : "",
+    RAIL_WIDTH,
+    ...(isWorkbench
+      ? [
+          sidebarVisible ? `${layout.sidebarWidth}px` : "0px",
+          "minmax(0, 1fr)",
+          panelOpen ? `${layout.panelWidth}px` : "",
+        ]
+      : ["minmax(0, 1fr)"]),
   ]
     .filter(Boolean)
     .join(" ");
 
   return (
     <div
-      className={`app ${IS_MAC ? "app--mac" : ""} ${sidebarVisible ? "" : "app--sidebar-hidden"}`}
+      className={`app ${IS_MAC ? "app--mac" : ""} ${sidebarVisible && isWorkbench ? "" : "app--sidebar-hidden"}`}
     >
       <TitleBar
         session={session}
         onSelectWorkspace={selectWorkspace}
         sidebarVisible={sidebarVisible}
         onToggleSidebar={() => setSidebarVisible((visible) => !visible)}
+        sidebarToggleEnabled={isWorkbench}
         tracePanelOpen={trace !== null}
         onToggleTracePanel={toggleTracePanel}
         browserPanelOpen={pane.isOpen}
         onToggleBrowserPanel={toggleBrowserPanel}
+        panelTogglesEnabled={isWorkbench}
         onOpenPalette={() => setPaletteOpen(true)}
         modifierLabel={MODIFIER_LABEL}
       />
 
       <div className="app__body" style={{ gridTemplateColumns: bodyColumns }}>
-        <ChatSidebar
-          chats={chats.chats}
-          activeChatId={chats.activeChat?.id ?? null}
-          onSelect={chats.selectChat}
-          onCreate={chats.newChat}
-          onDelete={chats.deleteChat}
-          onRename={chats.renameChat}
-          session={session}
-          onDisconnect={disconnect}
-          resizeHandle={
-            <Resizer
-              label="Resize the conversation list"
-              className="resizer--sidebar"
-              onMove={layout.resizeSidebar}
-              onNudge={(direction) => layout.nudgeSidebar(direction * NUDGE_PX)}
-              onReset={layout.resetSidebar}
-            />
-          }
+        <NavRail
+          active={view}
+          onSelect={selectView}
+          egressDetected={posture.data ? !posture.data.sovereign : false}
         />
 
-        <main className="main">
-          <header className="main__head">
-            <div className="main__title-group">
-              <h1 className="main__title">{chats.activeChat?.title ?? "Workbench"}</h1>
-              {chats.activeChat && (
-                <span className="main__meta">
-                  {chats.activeChat.messages.length}{" "}
-                  {chats.activeChat.messages.length === 1 ? "message" : "messages"}
-                </span>
-              )}
-            </div>
+        {/*
+          Switching away unmounts the conversation columns. Everything worth
+          keeping — the chat list, the open thread, the draft, the trace — is
+          held in this component, so the only thing lost is the thread's scroll
+          position, which follows the newest turn on return anyway.
+        */}
+        {isWorkbench && (
+          <>
+            <ChatSidebar
+              chats={chats.chats}
+              activeChatId={chats.activeChat?.id ?? null}
+              onSelect={chats.selectChat}
+              onCreate={chats.newChat}
+              onDelete={chats.deleteChat}
+              onRename={chats.renameChat}
+              session={session}
+              onDisconnect={disconnect}
+              resizeHandle={
+                <Resizer
+                  label="Resize the conversation list"
+                  className="resizer--sidebar"
+                  onMove={layout.resizeSidebar}
+                  onNudge={(direction) => layout.nudgeSidebar(direction * NUDGE_PX)}
+                  onReset={layout.resetSidebar}
+                />
+              }
+            />
 
-            <div className="main__actions">
-              {!sidebarVisible && (
-                <IconButton
-                  icon="plus"
-                  label="New conversation"
-                  size="sm"
-                  onClick={chats.newChat}
-                  tooltipAlign="end"
+            <main className="main">
+              <header className="main__head">
+                <div className="main__title-group">
+                  <h1 className="main__title">{chats.activeChat?.title ?? "Workbench"}</h1>
+                  {chats.activeChat && (
+                    <span className="main__meta">
+                      {chats.activeChat.messages.length}{" "}
+                      {chats.activeChat.messages.length === 1 ? "message" : "messages"}
+                    </span>
+                  )}
+                </div>
+
+                <div className="main__actions">
+                  {!sidebarVisible && (
+                    <IconButton
+                      icon="plus"
+                      label="New conversation"
+                      size="sm"
+                      onClick={chats.newChat}
+                      tooltipAlign="end"
+                    />
+                  )}
+                </div>
+              </header>
+
+              {chats.error && (
+                <div className="alert" role="alert">
+                  <Icon name="alert-circle" size={15} />
+                  <span className="alert__text">{chats.error}</span>
+                  <IconButton
+                    icon="close"
+                    label="Dismiss"
+                    size="sm"
+                    hideTooltip
+                    onClick={chats.dismissError}
+                  />
+                </div>
+              )}
+
+              {chats.isLoading ? (
+                <div className="center-state">
+                  <span className="spinner" aria-hidden="true" />
+                  Loading conversations…
+                </div>
+              ) : chats.activeChat ? (
+                <ChatThread
+                  chat={chats.activeChat}
+                  capabilities={capabilities}
+                  onOpenUrl={openUrl}
+                  onShowTrace={showTrace}
+                  activeTraceRunId={trace?.runId ?? null}
+                  onSuggest={setDraft}
+                />
+              ) : (
+                <div className="center-state">No conversation selected.</div>
+              )}
+
+              <Composer
+                value={draft}
+                onValueChange={setDraft}
+                disabled={!chats.activeChat}
+                isStreaming={chats.isStreaming}
+                classification={classification}
+                onClassificationChange={setClassification}
+                onSubmit={chats.send}
+                onCancel={chats.cancel}
+                onOpenBrowser={openUrl}
+              />
+
+              {panelOpen && (
+                <Resizer
+                  label="Resize the inspector panel"
+                  className="resizer--panel"
+                  onMove={layout.resizePanel}
+                  // Nudging right shrinks the panel, so the sign is flipped
+                  // relative to the sidebar's handle.
+                  onNudge={(direction) => layout.nudgePanel(-direction * NUDGE_PX)}
+                  onReset={layout.resetPanel}
+                  // The native browser view would swallow the pointer mid-drag;
+                  // parking it hands those events back to the DOM.
+                  onStart={() => pane.setTracking(false)}
+                  onEnd={() => pane.setTracking(true)}
                 />
               )}
-            </div>
-          </header>
+            </main>
 
-          {chats.error && (
-            <div className="alert" role="alert">
-              <Icon name="alert-circle" size={15} />
-              <span className="alert__text">{chats.error}</span>
-              <IconButton
-                icon="close"
-                label="Dismiss"
-                size="sm"
-                hideTooltip
-                onClick={chats.dismissError}
+            {pane.isOpen && (
+              <BrowserPanel
+                pane={pane}
+                onSelectTab={selectPanelTab}
+                traceEnabled={latestTrace !== null}
+                onClose={closePanel}
               />
-            </div>
-          )}
+            )}
+            {!pane.isOpen && trace && (
+              <TracePanel trace={trace} onClose={closePanel} onSelectTab={selectPanelTab} />
+            )}
+          </>
+        )}
 
-          {chats.isLoading ? (
-            <div className="center-state">
-              <span className="spinner" aria-hidden="true" />
-              Loading conversations…
-            </div>
-          ) : chats.activeChat ? (
-            <ChatThread
-              chat={chats.activeChat}
-              capabilities={capabilities}
-              onOpenUrl={openUrl}
-              onShowTrace={showTrace}
-              activeTraceRunId={trace?.runId ?? null}
-              onSuggest={setDraft}
-            />
-          ) : (
-            <div className="center-state">No conversation selected.</div>
-          )}
-
-          <Composer
-            value={draft}
-            onValueChange={setDraft}
-            disabled={!chats.activeChat}
-            isStreaming={chats.isStreaming}
-            classification={classification}
-            onClassificationChange={setClassification}
-            onSubmit={chats.send}
-            onCancel={chats.cancel}
-            onOpenBrowser={openUrl}
-          />
-
-          {panelOpen && (
-            <Resizer
-              label="Resize the inspector panel"
-              className="resizer--panel"
-              onMove={layout.resizePanel}
-              // Nudging right shrinks the panel, so the sign is flipped
-              // relative to the sidebar's handle.
-              onNudge={(direction) => layout.nudgePanel(-direction * NUDGE_PX)}
-              onReset={layout.resetPanel}
-              // The native browser view would swallow the pointer mid-drag;
-              // parking it hands those events back to the DOM.
-              onStart={() => pane.setTracking(false)}
-              onEnd={() => pane.setTracking(true)}
-            />
-          )}
-        </main>
-
-        {pane.isOpen && (
-          <BrowserPanel
-            pane={pane}
-            onSelectTab={selectPanelTab}
-            traceEnabled={latestTrace !== null}
-            onClose={closePanel}
+        {view === "sovereignty" && (
+          <SovereigntyView workspaceId={session.workspace?.id ?? null} />
+        )}
+        {view === "audit" && (
+          <AuditView
+            workspaces={session.workspaces}
+            workspaceId={session.workspace?.id ?? null}
+            onSelectWorkspace={selectWorkspace}
           />
         )}
-        {!pane.isOpen && trace && (
-          <TracePanel trace={trace} onClose={closePanel} onSelectTab={selectPanelTab} />
+        {view === "admin" && (
+          <AdminView workspaces={session.workspaces} workspaceId={session.workspace?.id ?? null} />
         )}
       </div>
 

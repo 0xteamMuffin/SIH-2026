@@ -10,17 +10,27 @@
 
 import type { MainEvent } from "./ipc.js";
 import type {
+  AdminUser,
+  AuditPage,
+  AuditQuery,
   BrowserPaneState,
   Chat,
   ChatId,
   ChatSummary,
   DataClassification,
   DocumentRef,
+  EgressLedger,
+  EgressProbeResult,
   Message,
+  ModelProviderStatusResult,
   PreviewCapabilities,
   SessionState,
+  SovereigntyPosture,
   SpreadsheetModel,
+  UserRoleName,
   ViewBounds,
+  WorkspaceMember,
+  WorkspaceSummary,
 } from "./types.js";
 
 export interface ChatApi {
@@ -74,6 +84,48 @@ export interface BrowserApi {
   openExternal(url: string): Promise<void>;
 }
 
+export interface SovereigntyApi {
+  /** Enforcement posture and every declared inference destination. */
+  posture(): Promise<SovereigntyPosture>;
+  /** Recorded calls with their destinations resolved. Administrators only. */
+  egress(options?: { limit?: number; sinceHours?: number }): Promise<EgressLedger>;
+  /**
+   * Attempts an outbound connection to each declared remote destination.
+   * A deliberate action — in the development profile it really does dial out.
+   *
+   * `workspaceId` only decides where the audit record is filed, so the proof
+   * is findable in that workspace's audit log.
+   */
+  probe(workspaceId?: string): Promise<EgressProbeResult>;
+}
+
+export interface AdminApi {
+  modelProviders(): Promise<ModelProviderStatusResult>;
+  users(): Promise<AdminUser[]>;
+  createUser(email: string, password: string, role: UserRoleName): Promise<AdminUser>;
+  /** Also revokes the account's sessions, backend-side. */
+  disableUser(userId: string): Promise<AdminUser>;
+  createWorkspace(name: string): Promise<WorkspaceSummary>;
+  workspaceMembers(workspaceId: string): Promise<WorkspaceMember[]>;
+  addMember(workspaceId: string, userId: string, role: UserRoleName): Promise<WorkspaceMember>;
+  updateMemberRole(
+    workspaceId: string,
+    userId: string,
+    role: UserRoleName,
+  ): Promise<WorkspaceMember>;
+  removeMember(workspaceId: string, userId: string): Promise<void>;
+}
+
+export interface AuditApi {
+  list(query: AuditQuery): Promise<AuditPage>;
+  /** Saves an export to disk. Resolves to `null` if the user cancels. */
+  export(
+    workspaceId: string,
+    format: "json" | "ndjson",
+    filters?: Omit<AuditQuery, "workspaceId" | "limit" | "cursor">,
+  ): Promise<string | null>;
+}
+
 export interface WorkbenchApi {
   readonly chat: ChatApi;
   readonly session: SessionApi;
@@ -81,6 +133,9 @@ export interface WorkbenchApi {
   readonly preview: PreviewApi;
   readonly documents: DocumentApi;
   readonly browser: BrowserApi;
+  readonly sovereignty: SovereigntyApi;
+  readonly admin: AdminApi;
+  readonly audit: AuditApi;
   /** Subscribes to main-process events. Returns an unsubscribe function. */
   onEvent(listener: (event: MainEvent) => void): () => void;
 }

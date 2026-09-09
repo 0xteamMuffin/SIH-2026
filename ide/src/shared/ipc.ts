@@ -13,18 +13,28 @@
  */
 
 import type {
+  AdminUser,
+  AuditPage,
+  AuditQuery,
   BrowserPaneState,
   Chat,
   ChatId,
   ChatSummary,
   DataClassification,
   DocumentRef,
+  EgressLedger,
+  EgressProbeResult,
   Message,
   MessageId,
+  ModelProviderStatusResult,
   PreviewCapabilities,
   SessionState,
+  SovereigntyPosture,
   SpreadsheetModel,
+  UserRoleName,
   ViewBounds,
+  WorkspaceMember,
+  WorkspaceSummary,
 } from "./types.js";
 
 export type IpcContract = {
@@ -91,6 +101,70 @@ export type IpcContract = {
   "browser:close": { request: void; response: void };
   /** Hands the page off to the user's real browser. */
   "browser:open-external": { request: string; response: void };
+
+  // ─── Sovereignty ───────────────────────────────────────────────────────────
+
+  /** Which egress controls are in force, and every declared destination. */
+  "sovereignty:posture": { request: void; response: SovereigntyPosture };
+  /** Recorded model and embedding calls, resolved to local or remote. */
+  "sovereignty:egress": {
+    request: { limit?: number; sinceHours?: number };
+    response: EgressLedger;
+  };
+  /**
+   * Attempts an outbound connection to every declared remote destination.
+   *
+   * Separate from the posture read on purpose: in the development profile
+   * these attempts genuinely reach the internet, so this must never fire as a
+   * side effect of opening a view.
+   */
+  "sovereignty:probe": {
+    /** Workspace to file the audit record against; the probe is deployment-wide. */
+    request: { workspaceId?: string };
+    response: EgressProbeResult;
+  };
+
+  // ─── Administration ────────────────────────────────────────────────────────
+
+  "admin:model-providers": { request: void; response: ModelProviderStatusResult };
+  "admin:users": { request: void; response: AdminUser[] };
+  "admin:create-user": {
+    request: { email: string; password: string; role: UserRoleName };
+    response: AdminUser;
+  };
+  /** Disabling also revokes the account's refresh sessions, backend-side. */
+  "admin:disable-user": { request: string; response: AdminUser };
+
+  "admin:create-workspace": { request: string; response: WorkspaceSummary };
+  "admin:workspace-members": { request: string; response: WorkspaceMember[] };
+  "admin:add-member": {
+    request: { workspaceId: string; userId: string; role: UserRoleName };
+    response: WorkspaceMember;
+  };
+  "admin:update-member-role": {
+    request: { workspaceId: string; userId: string; role: UserRoleName };
+    response: WorkspaceMember;
+  };
+  "admin:remove-member": { request: { workspaceId: string; userId: string }; response: void };
+
+  // ─── Audit ─────────────────────────────────────────────────────────────────
+
+  "audit:list": { request: AuditQuery; response: AuditPage };
+  /**
+   * Writes the export to a location the user chooses.
+   *
+   * Resolves to the saved path, or `null` if the dialog was cancelled. Main
+   * owns the write so the renderer never holds the whole export in memory or
+   * names a path on disk.
+   */
+  "audit:export": {
+    request: {
+      workspaceId: string;
+      format: "json" | "ndjson";
+      filters: Omit<AuditQuery, "workspaceId" | "limit" | "cursor">;
+    };
+    response: string | null;
+  };
 };
 
 export type IpcChannel = keyof IpcContract;

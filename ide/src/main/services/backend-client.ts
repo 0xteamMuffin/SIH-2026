@@ -1,6 +1,19 @@
 import { basename } from "node:path";
 
-import type { DataClassification, SessionUser, WorkspaceSummary } from "@shared/types.js";
+import type {
+  AdminUser,
+  AuditPage,
+  AuditQuery,
+  DataClassification,
+  EgressLedger,
+  EgressProbeResult,
+  ModelProviderStatusResult,
+  SessionUser,
+  SovereigntyPosture,
+  UserRoleName,
+  WorkspaceMember,
+  WorkspaceSummary,
+} from "@shared/types.js";
 
 /**
  * HTTP client for the on-premise backend.
@@ -185,6 +198,151 @@ export class BackendClient {
     const response = await this.#fetch(`/api/artifacts/${artifactId}/download`, {});
     if (!response.ok) throw new BackendError(`Download failed (${response.status})`, response.status);
     return Buffer.from(await response.arrayBuffer());
+  }
+
+  // ─── Governance ────────────────────────────────────────────────────────────
+  //
+  // Every method here returns the backend's own payload unchanged. These
+  // surfaces exist to show what the backend recorded, so reshaping the data on
+  // the way through would put a translation layer between the evidence and the
+  // person checking it.
+
+  /**
+   * Which egress controls are in force, and every declared inference
+   * destination. Readable by any authenticated user by design — the people
+   * doing the work should not need an administrator to check where it went.
+   */
+  async getSovereigntyPosture(): Promise<SovereigntyPosture> {
+    return this.#json<SovereigntyPosture>("/api/sovereignty/posture");
+  }
+
+  /** Recorded model and embedding calls, resolved to local or remote. */
+  async getEgressLedger(options: { limit?: number; sinceHours?: number } = {}): Promise<EgressLedger> {
+    const query = new URLSearchParams();
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    if (options.sinceHours !== undefined) query.set("sinceHours", String(options.sinceHours));
+    return this.#json<EgressLedger>(`/api/sovereignty/egress?${query.toString()}`);
+  }
+
+  /**
+   * Attempts an outbound connection to every declared remote destination.
+   *
+   * A deliberate action, never a side effect of opening a view: in the
+   * development profile these attempts genuinely reach the internet.
+   */
+  async probeEgress(workspaceId?: string): Promise<EgressProbeResult> {
+    return this.#json<EgressProbeResult>("/api/sovereignty/egress-probe", {
+      method: "POST",
+      // The workspace only decides where the audit record is filed; the probe
+      // itself covers the whole deployment.
+      body: JSON.stringify(workspaceId ? { workspaceId } : {}),
+    });
+  }
+
+  async getModelProviderStatus(): Promise<ModelProviderStatusResult> {
+    return this.#json<ModelProviderStatusResult>("/api/admin/model-providers/status");
+  }
+
+  async listUsers(): Promise<AdminUser[]> {
+    const { users } = await this.#json<{ users: AdminUser[] }>("/api/auth/users");
+    return users;
+  }
+
+  async createUser(email: string, password: string, role: UserRoleName): Promise<AdminUser> {
+    const { user } = await this.#json<{ user: AdminUser }>("/api/auth/users", {
+      method: "POST",
+      body: JSON.stringify({ email, password, role }),
+    });
+    return user;
+  }
+
+  async disableUser(userId: string): Promise<AdminUser> {
+    const { user } = await this.#json<{ user: AdminUser }>(`/api/auth/users/${userId}/disable`, {
+      method: "POST",
+    });
+    return user;
+  }
+
+  async listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMember[]> {
+    const { members } = await this.#json<{ members: WorkspaceMember[] }>(
+      `/api/workspaces/${workspaceId}/members`,
+    );
+    return members;
+  }
+
+  async addWorkspaceMember(
+    workspaceId: string,
+    userId: string,
+    role: UserRoleName,
+  ): Promise<WorkspaceMember> {
+    const { member } = await this.#json<{ member: WorkspaceMember }>(
+      `/api/workspaces/${workspaceId}/members`,
+      { method: "POST", body: JSON.stringify({ userId, role }) },
+    );
+    return member;
+  }
+
+  async updateWorkspaceMemberRole(
+    workspaceId: string,
+    userId: string,
+    role: UserRoleName,
+  ): Promise<WorkspaceMember> {
+    const { member } = await this.#json<{ member: WorkspaceMember }>(
+      `/api/workspaces/${workspaceId}/members/${userId}`,
+      { method: "PATCH", body: JSON.stringify({ role }) },
+    );
+    return member;
+  }
+
+  async removeWorkspaceMember(workspaceId: string, userId: string): Promise<void> {
+    await this.#json(`/api/workspaces/${workspaceId}/members/${userId}`, { method: "DELETE" });
+  }
+
+  async listAuditEvents(query: AuditQuery): Promise<AuditPage> {
+    const search = new URLSearchParams();
+    if (query.eventType) search.set("eventType", query.eventType);
+    if (query.actorId) search.set("actorId", query.actorId);
+    if (query.runId) search.set("runId", query.runId);
+    if (query.from) search.set("from", query.from);
+    if (query.to) search.set("to", query.to);
+    if (query.cursor) search.set("cursor", query.cursor);
+    search.set("limit", String(query.limit ?? 50));
+
+    const payload = await this.#json<{
+      auditEvents: AuditPage["auditEvents"];
+      pagination: { nextCursor: string | null };
+    }>(`/api/workspaces/${query.workspaceId}/audit-events?${search.toString()}`);
+
+    return { auditEvents: payload.auditEvents, nextCursor: payload.pagination.nextCursor };
+  }
+
+  /**
+   * Streams the audit export to a string.
+   *
+   * The backend streams this so a large range does not have to be buffered
+   * server-side; the client still buffers it, because the destination is a
+   * file the user picks and the dialog cannot open until they act.
+   */
+  async exportAuditEvents(
+    workspaceId: string,
+    format: "json" | "ndjson",
+    filters: Omit<AuditQuery, "workspaceId" | "limit" | "cursor"> = {},
+  ): Promise<string> {
+    const search = new URLSearchParams({ format });
+    if (filters.eventType) search.set("eventType", filters.eventType);
+    if (filters.actorId) search.set("actorId", filters.actorId);
+    if (filters.runId) search.set("runId", filters.runId);
+    if (filters.from) search.set("from", filters.from);
+    if (filters.to) search.set("to", filters.to);
+
+    const response = await this.#fetch(
+      `/api/workspaces/${workspaceId}/audit-events/export?${search.toString()}`,
+      {},
+    );
+    if (!response.ok) {
+      throw new BackendError(`Audit export failed (${response.status})`, response.status);
+    }
+    return response.text();
   }
 
   async health(): Promise<boolean> {
