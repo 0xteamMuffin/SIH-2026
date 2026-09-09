@@ -6,6 +6,7 @@ import { artifactsRouter } from "./modules/artifacts/artifacts.routes.js";
 import { agentRouter } from "./modules/agent/agent.routes.js";
 import { knowledgeRouter } from "./modules/knowledge/knowledge.routes.js";
 import { auditRouter } from "./modules/audit/audit.routes.js";
+import { sovereigntyRouter } from "./modules/sovereignty/sovereignty.routes.js";
 import { env } from "./config/env.js";
 import { mountApiRateLimits, mountRequestHardening } from "./middleware/request-hardening.js";
 import { authenticate, requireRole } from "./middleware/auth.js";
@@ -51,6 +52,7 @@ export const openApiDocument = {
     { name: "Approvals", description: "Human decisions for approval-gated agent tools." },
     { name: "Knowledge", description: "Indexed knowledge sources and asynchronous retrieval queries." },
     { name: "Audit", description: "Workspace-scoped security and operational audit events." },
+    { name: "Sovereignty", description: "Evidence that confidential work stays on-premise: enforcement posture, the egress ledger, and a live egress probe." },
   ],
   paths: {
     "/health": {
@@ -830,6 +832,64 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/sovereignty/posture": {
+      get: {
+        operationId: "getSovereigntyPosture",
+        summary: "Get the sovereignty enforcement posture",
+        description: "Reports which egress controls are in force, every declared inference destination, and whether each required capability can be served without leaving the premises. Configuration only \u2014 no operational data \u2014 so it is readable by any authenticated user.",
+        tags: ["Sovereignty"],
+        responses: {
+          "200": jsonResponse("The current enforcement posture.", ref("SovereigntyPosture")),
+          ...securedErrors,
+        },
+      },
+    },
+    "/api/sovereignty/egress": {
+      get: {
+        operationId: "getEgressLedger",
+        summary: "List recorded inference destinations",
+        description: "Every model and embedding call the deployment has made, with its destination resolved to local or remote. Metadata only: no prompt or document content is recorded or returned. Spans all workspaces, so it requires a global administrator.",
+        tags: ["Sovereignty"],
+        parameters: [
+          { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 200, default: 50 } },
+          { name: "sinceHours", in: "query", description: "Window to summarise over. Omit for all recorded history.", schema: { type: "integer", minimum: 1, maximum: 8760 } },
+        ],
+        responses: {
+          "200": jsonResponse("The egress ledger and its summary.", ref("EgressLedger")),
+          ...securedErrors,
+        },
+      },
+    },
+    "/api/sovereignty/egress-probe": {
+      post: {
+        operationId: "runEgressProbe",
+        summary: "Attempt an outbound connection to every declared remote destination",
+        description: "Live proof of network isolation: attempts a connection to each remote provider host and reports whether it was refused. In the sovereign profile every target fails at the transport layer because the container has no route. The attempt is itself recorded as an audit event.",
+        tags: ["Sovereignty"],
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  workspaceId: {
+                    type: "string",
+                    format: "uuid",
+                    description: "Workspace to file the audit record against. The probe itself is deployment-wide; this only makes the record discoverable in the workspace-scoped audit log.",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": jsonResponse("The probe result.", ref("EgressProbeResult")),
+          ...securedErrors,
+        },
+      },
+    },
     "/api/workspaces/{workspaceId}/audit-events": {
       get: {
         operationId: "listAuditEvents",
@@ -1398,6 +1458,136 @@ export const openApiDocument = {
         required: ["index", "job"],
         properties: { index: ref("KnowledgeIndex"), job: ref("KnowledgeJob") },
       },
+      ModelCapability: { type: "string", enum: ["general", "document", "vision", "code", "embedding", "reranking"] },
+      ProviderLocation: { type: "string", enum: ["local", "remote"] },
+      AppMode: { type: "string", enum: ["development", "sovereign"] },
+      SovereigntyControl: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "title", "detail", "evidence", "state"],
+        properties: {
+          id: { type: "string" },
+          title: { type: "string" },
+          detail: { type: "string" },
+          evidence: { type: "string", description: "Where a reviewer can confirm the control." },
+          state: { type: "string", enum: ["enforced", "development", "structural"] },
+        },
+      },
+      SovereigntyProfile: {
+        type: "object",
+        additionalProperties: false,
+        required: ["profileId", "modelId", "capabilities", "priority", "enabled", "selectable"],
+        properties: {
+          profileId: { type: "string" },
+          modelId: { type: "string" },
+          capabilities: { type: "array", items: ref("ModelCapability") },
+          priority: { type: "integer" },
+          enabled: { type: "boolean" },
+          selectable: { type: "boolean", description: "Whether the router may currently choose this profile." },
+        },
+      },
+      SovereigntyProvider: {
+        type: "object",
+        additionalProperties: false,
+        required: ["providerId", "location", "host", "requiresApiKey", "apiKeyPresent", "reachablePolicy", "profiles"],
+        properties: {
+          providerId: { type: "string" },
+          location: ref("ProviderLocation"),
+          host: { type: ["string", "null"], description: "Host only; credentials and paths are never returned." },
+          requiresApiKey: { type: "boolean" },
+          apiKeyPresent: { type: "boolean" },
+          reachablePolicy: { type: "boolean" },
+          profiles: { type: "array", items: ref("SovereigntyProfile") },
+        },
+      },
+      CapabilityCoverage: {
+        type: "object",
+        additionalProperties: false,
+        required: ["capability", "localProfiles", "remoteProfiles", "sovereignReady"],
+        properties: {
+          capability: ref("ModelCapability"),
+          localProfiles: { type: "integer", minimum: 0 },
+          remoteProfiles: { type: "integer", minimum: 0 },
+          sovereignReady: { type: "boolean", description: "True when the capability can be served on-premise." },
+        },
+      },
+      SovereigntyPosture: {
+        type: "object",
+        additionalProperties: false,
+        required: ["mode", "sovereign", "allowRemoteInference", "controls", "providers", "capabilityCoverage", "remoteDeniedClassifications", "checkedAt"],
+        properties: {
+          mode: ref("AppMode"),
+          sovereign: { type: "boolean" },
+          allowRemoteInference: { type: "boolean" },
+          controls: { type: "array", items: ref("SovereigntyControl") },
+          providers: { type: "array", items: ref("SovereigntyProvider") },
+          capabilityCoverage: { type: "array", items: ref("CapabilityCoverage") },
+          remoteDeniedClassifications: { type: "array", items: ref("DataClassification") },
+          checkedAt: { type: "string", format: "date-time" },
+        },
+      },
+      EgressEntry: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "kind", "at", "channel", "providerId", "host", "profileId", "modelId", "status", "latencyMs", "totalTokens", "runId", "workspaceId"],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          kind: { type: "string", enum: ["inference", "embedding"] },
+          at: { type: "string", format: "date-time" },
+          channel: { type: "string", enum: ["local", "remote", "unknown"] },
+          providerId: { type: "string" },
+          host: { type: ["string", "null"] },
+          profileId: { type: "string" },
+          modelId: { type: "string" },
+          status: { type: "string" },
+          latencyMs: { type: ["integer", "null"] },
+          totalTokens: { type: ["integer", "null"] },
+          runId: { type: ["string", "null"], format: "uuid" },
+          workspaceId: { type: ["string", "null"], format: "uuid" },
+        },
+      },
+      EgressSummary: {
+        type: "object",
+        additionalProperties: false,
+        required: ["since", "localCalls", "remoteCalls", "unknownCalls", "blockedAttempts", "remoteHosts"],
+        properties: {
+          since: { type: ["string", "null"], format: "date-time" },
+          localCalls: { type: "integer", minimum: 0 },
+          remoteCalls: { type: "integer", minimum: 0 },
+          unknownCalls: { type: "integer", minimum: 0, description: "Calls whose provider is no longer declared, so unclassifiable." },
+          blockedAttempts: { type: "integer", minimum: 0, description: "Refusals recorded by the policy guard \u2014 attempts that never left." },
+          remoteHosts: { type: "array", items: { type: "string" } },
+        },
+      },
+      EgressLedger: {
+        type: "object",
+        additionalProperties: false,
+        required: ["summary", "entries"],
+        properties: { summary: ref("EgressSummary"), entries: { type: "array", items: ref("EgressEntry") } },
+      },
+      EgressProbeTarget: {
+        type: "object",
+        additionalProperties: false,
+        required: ["host", "url", "verdict", "latencyMs"],
+        properties: {
+          host: { type: "string" },
+          url: { type: "string" },
+          verdict: { type: "string", enum: ["blocked", "reachable"] },
+          reason: { type: "string", description: "Transport-level reason, present when blocked." },
+          latencyMs: { type: "integer", minimum: 0 },
+        },
+      },
+      EgressProbeResult: {
+        type: "object",
+        additionalProperties: false,
+        required: ["mode", "allBlocked", "targets", "probedAt"],
+        properties: {
+          mode: ref("AppMode"),
+          allBlocked: { type: "boolean", description: "True when every declared remote destination refused the connection." },
+          targets: { type: "array", items: ref("EgressProbeTarget") },
+          probedAt: { type: "string", format: "date-time" },
+        },
+      },
       KnowledgeQueryJobResult: {
         type: "object",
         additionalProperties: false,
@@ -1430,6 +1620,7 @@ export const apiRouteMounts = [
   { prefix: "/api", router: agentRouter },
   { prefix: "/api", router: knowledgeRouter },
   { prefix: "/api", router: auditRouter },
+  { prefix: "/api/sovereignty", router: sovereigntyRouter },
 ] as const;
 
 export function createApp(overrides: Partial<ApplicationDependencies> = {}) {
