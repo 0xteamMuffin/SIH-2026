@@ -186,7 +186,7 @@
     {
       "id": "local-general",
       "providerId": "local-runtime",
-      "modelId": "qwen3.5:4b",
+      "modelId": "qwen3:1.7b",
       "capabilities": ["general", "document"],
       "supportsTools": true,
       "maxOutputTokens": 8192,
@@ -195,9 +195,9 @@
     {
       "id": "local-vision",
       "providerId": "local-runtime",
-      "modelId": "qwen3.5:4b",
+      "modelId": "gemma3:4b",
       "capabilities": ["vision"],
-      "supportsTools": true,
+      "supportsTools": false,
       "priority": 1000
     },
     {

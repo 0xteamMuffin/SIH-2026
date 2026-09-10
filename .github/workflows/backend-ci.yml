@@ -9,7 +9,7 @@ on:
       - "docker-compose*.yml"
       - ".env.example"
       - "ops/**"
-      - "docs/VERIFICATION.md"
+      - "docs/ARCHITECTURE.md"
   pull_request:
     paths:
       - "backend/**"
@@ -18,7 +18,7 @@ on:
       - "docker-compose*.yml"
       - ".env.example"
       - "ops/**"
-      - "docs/VERIFICATION.md"
+      - "docs/ARCHITECTURE.md"
 
 permissions:
   contents: read

@@ -81,9 +81,21 @@ const schema = z.object({
   // approval can re-route to a fallback profile and spend more. Five left no
   // headroom at all, so a normal run hit the limit.
   AGENT_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(64).default(16),
-  AGENT_MAX_INPUT_TOKENS: z.coerce.number().int().min(1).max(10_000_000).default(32_768),
-  AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(1).max(10_000_000).default(8_192),
-  AGENT_MAX_TOTAL_TOKENS: z.coerce.number().int().min(1).max(10_000_000).default(40_960),
+  /*
+   * Token budgets are per *run*, summed across every model invocation the
+   * agent loop makes — not per request. The loop resends its growing
+   * conversation each turn, so input accrues roughly quadratically with turn
+   * count: a run that reads a document and then reasons over several tool
+   * results spends far more than the document's own token count.
+   *
+   * These are spend caps, not context windows. A single request that exceeds
+   * the model's own context is rejected by the provider regardless of what is
+   * set here.
+   */
+  AGENT_MAX_INPUT_TOKENS: z.coerce.number().int().min(1).max(10_000_000).default(400_000),
+  AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(1).max(10_000_000).default(65_536),
+  /* Must stay >= input + output, or the total trips before either of them. */
+  AGENT_MAX_TOTAL_TOKENS: z.coerce.number().int().min(1).max(10_000_000).default(465_536),
   AGENT_MAX_CONCURRENT_RUNS_PER_USER: z.coerce.number().int().min(1).max(100).default(2),
   AGENT_RUN_DEADLINE_MS: z.coerce.number().int().min(10_000).max(3_600_000).default(900_000),
   APP_MODE: z.enum(["development", "sovereign"]).default("development"),

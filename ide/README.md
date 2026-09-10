@@ -16,9 +16,9 @@ Connected to the on-premise backend and running real work: sign-in, real model
 runs, live tool steps, human approval of high-risk tools, and inline previews
 of both attached and agent-generated documents.
 
-The backend's agent is still a fixed pipeline rather than a planning loop, so a
-turn gathers context, analyses, and produces a deliverable — it does not yet
-iterate. See
+The backend's agent is a model-driven loop: it chooses its own next tool each
+turn and can revise — read a document, find the text garbled, look at the page
+as an image, search, then produce the deliverable. See
 [docs/DOCUMENT_PREVIEW.md](./docs/DOCUMENT_PREVIEW.md) for the viewer stack and
 [docs/BROWSER_PANE.md](./docs/BROWSER_PANE.md) for how the embedded browser
 works and what agentic browsing will need from it.
@@ -42,13 +42,17 @@ app opens on a sign-in screen. Start the stack from the repository root, then
 sign in with the seeded admin credentials from `.env`:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+docker compose up -d
 ```
 
-The dev override publishes the API on `http://localhost:4000` and puts the
+The base stack publishes the API on `http://localhost:4000` and puts the
 backend on the `edge` network, because the Electron client runs on the host
 rather than inside the compose network. The sovereign stack does neither — it
 publishes nothing and keeps the backend on the closed `internal` network.
+
+Add `-f docker-compose.dev.yml` for hot reload. If you do, come back to the
+normal stack with `docker compose up -d --build` — the dev override replaces the
+backend and worker images with watch-mode variants that need the bind mount.
 
 Credentials go straight to the main process and are never persisted, so a
 restart requires signing in again.
