@@ -21,6 +21,7 @@ import type {
   ChatId,
   ChatSummary,
   DataClassification,
+  DocumentReadRequest,
   DocumentRef,
   EgressLedger,
   EgressProbeResult,
@@ -81,15 +82,18 @@ export type IpcContract = {
    * files the user has explicitly opened, so a compromised renderer cannot
    * name an arbitrary path on disk.
    */
-  "document:read": { request: string; response: ArrayBuffer };
+  "document:read": { request: DocumentReadRequest; response: ArrayBuffer };
   /** Parsed workbook (XLSX or CSV) for a registered document. */
-  "document:read-spreadsheet": { request: string; response: SpreadsheetModel };
+  "document:read-spreadsheet": { request: DocumentReadRequest; response: SpreadsheetModel };
   /**
    * Writes a document to a location the user chooses.
    *
    * Resolves to the saved path, or `null` if the save dialog was cancelled.
    */
-  "document:save": { request: { documentId: string; filename: string }; response: string | null };
+  "document:save": {
+    request: DocumentReadRequest & { filename: string };
+    response: string | null;
+  };
 
   /** Opens (or re-navigates) the embedded pane and shows it at `bounds`. */
   "browser:open": { request: { url: string; bounds: ViewBounds }; response: BrowserPaneState };

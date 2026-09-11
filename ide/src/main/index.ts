@@ -43,6 +43,10 @@ async function main(): Promise<void> {
   installApplicationMenu();
 
   store = await ChatStore.open(app.getPath("userData"));
+  // Document ids outlive the process in chat history; the library that maps
+  // them to paths is per-session by design. Re-registering the pairs main
+  // itself persisted is what keeps a restored thread's attachments readable.
+  documents.restore(store.localDocumentPaths());
   chats = new ChatService(store, new BackendAgentGateway({ session, documents }), events);
 
   openWindow();

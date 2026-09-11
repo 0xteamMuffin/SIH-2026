@@ -60,9 +60,9 @@ const api: WorkbenchApi = {
 
   documents: {
     pick: () => invoke("document:pick", undefined),
-    read: (documentId) => invoke("document:read", documentId),
-    readSpreadsheet: (documentId) => invoke("document:read-spreadsheet", documentId),
-    save: (documentId, filename) => invoke("document:save", { documentId, filename }),
+    read: (document) => invoke("document:read", document),
+    readSpreadsheet: (document) => invoke("document:read-spreadsheet", document),
+    save: (document, filename) => invoke("document:save", { ...document, filename }),
   },
 
   browser: {

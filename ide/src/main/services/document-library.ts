@@ -124,6 +124,27 @@ export class DocumentLibrary {
   }
 
   /**
+   * Re-registers `id → path` pairs recovered from persisted chat history.
+   *
+   * Ids issued in an earlier session are otherwise unknown to this process,
+   * which would leave a thread unable to preview its own attachments after a
+   * restart. Ids this session already issued are never overwritten, so a
+   * restore cannot redirect a live registration at a different file.
+   *
+   * Paths are not checked here: a file that has since moved should fail when
+   * it is actually read, not silently vanish from a thread at startup.
+   */
+  restore(entries: Iterable<readonly [string, string]>): number {
+    let restored = 0;
+    for (const [documentId, path] of entries) {
+      if (this.#paths.has(documentId)) continue;
+      this.#paths.set(documentId, path);
+      restored += 1;
+    }
+    return restored;
+  }
+
+  /**
    * Reads a registered document.
    *
    * Rejects unknown ids and anything over the preview cap, so a single huge
@@ -133,7 +154,15 @@ export class DocumentLibrary {
     const path = this.#paths.get(documentId);
     if (!path) throw new Error("Unknown document — it was not opened in this session.");
 
-    const { size } = await stat(path);
+    // Restored registrations can outlive the file they name, so a missing
+    // path is reported as a moved file rather than a raw ENOENT.
+    let size: number;
+    try {
+      ({ size } = await stat(path));
+    } catch {
+      throw new Error(`${basename(path)} is no longer at ${path}.`);
+    }
+
     if (size > MAX_PREVIEW_BYTES) {
       throw new Error(
         `File is ${formatMegabytes(size)} — larger than the ${formatMegabytes(MAX_PREVIEW_BYTES)} preview limit.`,

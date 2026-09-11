@@ -13,8 +13,8 @@ import type { DocumentViewerProps } from "./registry.js";
  * plain display strings and both XLSX and CSV arrive through one path.
  */
 export function SpreadsheetViewer({ document }: DocumentViewerProps): React.JSX.Element {
-  const { data, isLoading, error } = useDocumentResource<SpreadsheetModel>(document, (documentId) =>
-    window.workbench.documents.readSpreadsheet(documentId),
+  const { data, isLoading, error } = useDocumentResource<SpreadsheetModel>(document, (request) =>
+    window.workbench.documents.readSpreadsheet(request),
   );
   const [activeSheet, setActiveSheet] = useState(0);
 

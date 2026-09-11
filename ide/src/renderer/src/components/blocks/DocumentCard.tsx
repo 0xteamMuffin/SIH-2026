@@ -45,7 +45,7 @@ export function DocumentCard({ document, capabilities }: DocumentCardProps): Rea
     setSaveState("saving");
     setSaveError(null);
     window.workbench.documents
-      .save(document.id, document.filename)
+      .save({ documentId: document.id, sourceType: document.source.type }, document.filename)
       .then((path) => setSaveState(path ? "saved" : "idle"))
       .catch((cause: unknown) => {
         setSaveState("idle");

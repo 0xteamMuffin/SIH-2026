@@ -30,6 +30,34 @@ export type ArtifactExtractionStatus =
   | "COMPLETED"
   | "FAILED";
 
+export interface DownloadedArtifact {
+  bytes: Buffer;
+  /** From `content-disposition`; `null` when the server did not send one. */
+  filename: string | null;
+  mimeType: string | null;
+}
+
+/**
+ * Pulls the filename out of a `content-disposition` header.
+ *
+ * Handles both the plain `filename="x.xlsx"` form the backend sends and the
+ * RFC 5987 `filename*=UTF-8''x.xlsx` encoding, and returns `null` rather than
+ * guessing when neither is present.
+ */
+function filenameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (encoded?.[1]) {
+    try {
+      return basename(decodeURIComponent(encoded[1].trim()));
+    } catch {
+      return null;
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain?.[1] ? basename(plain[1].trim()) : null;
+}
+
 export interface BackendArtifact {
   id: string;
   filename: string;
@@ -194,10 +222,16 @@ export class BackendClient {
     });
   }
 
-  async downloadArtifact(artifactId: string): Promise<Buffer> {
+  async downloadArtifact(artifactId: string): Promise<DownloadedArtifact> {
     const response = await this.#fetch(`/api/artifacts/${artifactId}/download`, {});
     if (!response.ok) throw new BackendError(`Download failed (${response.status})`, response.status);
-    return Buffer.from(await response.arrayBuffer());
+    return {
+      bytes: Buffer.from(await response.arrayBuffer()),
+      // The server names the file. Callers that pick a parser by extension
+      // follow the artifact's real name rather than assuming a format.
+      filename: filenameFromDisposition(response.headers.get("content-disposition")),
+      mimeType: response.headers.get("content-type"),
+    };
   }
 
   // ─── Governance ────────────────────────────────────────────────────────────

@@ -18,6 +18,7 @@ import type {
   ChatId,
   ChatSummary,
   DataClassification,
+  DocumentReadRequest,
   DocumentRef,
   EgressLedger,
   EgressProbeResult,
@@ -67,10 +68,10 @@ export interface ApprovalApi {
 export interface DocumentApi {
   /** Opens a native file picker. Resolves to `[]` if the user cancels. */
   pick(): Promise<DocumentRef[]>;
-  read(documentId: string): Promise<ArrayBuffer>;
-  readSpreadsheet(documentId: string): Promise<SpreadsheetModel>;
+  read(document: DocumentReadRequest): Promise<ArrayBuffer>;
+  readSpreadsheet(document: DocumentReadRequest): Promise<SpreadsheetModel>;
   /** Saves a copy to disk. Resolves to `null` if the user cancels. */
-  save(documentId: string, filename: string): Promise<string | null>;
+  save(document: DocumentReadRequest, filename: string): Promise<string | null>;
 }
 
 export interface BrowserApi {

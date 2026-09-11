@@ -183,6 +183,21 @@ export interface DocumentRef {
   source: DocumentSource;
 }
 
+/**
+ * How the renderer names a document it wants main to read.
+ *
+ * Carries the `DocumentSource` discriminator but never the path or artifact
+ * key, so main still resolves a local id to a path through the library and a
+ * compromised renderer still cannot name a file on disk. The discriminator is
+ * what keeps the two id spaces apart: library ids are per-session, and without
+ * it an id that has aged out would be indistinguishable from an artifact id
+ * and get retried against the backend.
+ */
+export interface DocumentReadRequest {
+  documentId: string;
+  sourceType: DocumentSource["type"];
+}
+
 // ─── Diffs ───────────────────────────────────────────────────────────────────
 
 export type FileChangeType = "added" | "modified" | "deleted" | "renamed";

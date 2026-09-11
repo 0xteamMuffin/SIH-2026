@@ -59,6 +59,29 @@ export class ChatStore {
     return chat ? structuredClone(chat) : null;
   }
 
+  /**
+   * Every locally-picked document in persisted history, as `id → path`.
+   *
+   * History outlives a process but `DocumentLibrary` deliberately does not,
+   * so these pairs are what keep a thread's own attachments previewable
+   * across a restart. Every path here was chosen by the user through the
+   * native picker in an earlier session and written by this process — the
+   * renderer never supplies one, so restoring them widens nothing.
+   */
+  localDocumentPaths(): Map<string, string> {
+    const paths = new Map<string, string>();
+    for (const chat of this.#chats.values()) {
+      for (const message of chat.messages) {
+        for (const block of message.blocks) {
+          if (block.kind !== "document") continue;
+          const { id, source } = block.document;
+          if (source.type === "file") paths.set(id, source.path);
+        }
+      }
+    }
+    return paths;
+  }
+
   create(): Chat {
     const now = new Date().toISOString();
     const chat: Chat = {

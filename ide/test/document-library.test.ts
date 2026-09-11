@@ -73,6 +73,39 @@ describe("DocumentLibrary", () => {
     await expect(new DocumentLibrary().read("not-a-real-id")).rejects.toThrow(/Unknown document/);
   });
 
+  // Ids outlive the process in chat history, so a restart must be able to
+  // read a thread's attachments back without the user re-picking them.
+  it("reads a document whose id was restored from an earlier session", async () => {
+    const path = join(directory, "restored.txt");
+    await writeFile(path, "from history");
+
+    const library = new DocumentLibrary();
+    expect(library.restore([["earlier-session-id", path]])).toBe(1);
+
+    expect(library.has("earlier-session-id")).toBe(true);
+    expect((await library.read("earlier-session-id")).toString("utf8")).toBe("from history");
+  });
+
+  it("never lets a restore redirect an id this session issued", async () => {
+    const own = join(directory, "own.txt");
+    const other = join(directory, "other.txt");
+    await writeFile(own, "mine");
+    await writeFile(other, "theirs");
+
+    const library = new DocumentLibrary();
+    const ref = await library.register(own);
+
+    expect(library.restore([[ref!.id, other]])).toBe(0);
+    expect((await library.read(ref!.id)).toString("utf8")).toBe("mine");
+  });
+
+  it("reports a restored file that has since moved", async () => {
+    const library = new DocumentLibrary();
+    library.restore([["gone", join(directory, "deleted.txt")]]);
+
+    await expect(library.read("gone")).rejects.toThrow(/no longer at/);
+  });
+
   it("refuses a path registered with a different library instance", async () => {
     // Ids are per-session state, not a token another instance would honour.
     const path = join(directory, "isolated.txt");
