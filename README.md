@@ -1,4 +1,16 @@
-# SIH-26117 — Sovereign Industrial AI Workbench
+<table>
+  <tr>
+    <td width="220">
+      <img src="./logo.png" alt="Kavach Logo" width="200">
+    </td>
+    <td>
+      <h1>SIH-26117 — Kavach</h1>
+      <h3>Sovereign Industrial AI Workbench</h3>
+    </td>
+  </tr>
+</table>
+
+---
 
 An on-premise AI workbench for confidential industrial knowledge work. Upload a document or state a task; an agent reads it, looks at it, searches indexed internal material, runs code when a human approves, and hands back a real deliverable — a DOCX approval note, a PPTX deck, an XLSX workbook with live formulas, source code — with every claim traceable to evidence and every step recorded.
 
