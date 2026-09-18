@@ -7,3 +7,4 @@ coverage/
 *.log
 ps.txt
 .recovery/
+.DS_Store
